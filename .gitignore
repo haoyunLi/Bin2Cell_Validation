@@ -1,0 +1,50 @@
+# Data directories
+input_HD/
+output_HD/
+kidney/
+
+# Large data files
+*.tif
+*.tiff
+*.btf
+*.h5
+*.parquet
+*.tar
+*.tar.gz
+*.cloupe
+
+# Results and outputs
+*.csv
+*.html
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Keep only code and requirements
+!*.py
+!*.ipynb
+!requirements.txt
+!README.md
+!.gitignore

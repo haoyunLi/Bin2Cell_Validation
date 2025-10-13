@@ -1,0 +1,13 @@
+# Core scientific computing libraries
+numpy>=1.21.0
+pandas>=1.3.0
+
+# Image processing
+Pillow>=9.0.0
+
+# Visualization
+matplotlib>=3.4.0
+
+# Jupyter notebook support (optional, if running the notebook)
+jupyter>=1.0.0
+ipykernel>=6.0.0
