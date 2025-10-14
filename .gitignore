@@ -2,8 +2,12 @@
 input_HD/
 output_HD/
 kidney/
+brain/
+CSGO/
+Bin2Cell_Validation/
 
 # Large data files
+*.png
 *.tif
 *.tiff
 *.btf

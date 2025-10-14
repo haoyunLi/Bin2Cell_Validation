@@ -3,11 +3,17 @@ numpy>=1.21.0
 pandas>=1.3.0
 
 # Image processing
-Pillow>=9.0.0
+Pillow>=10.4.0
 
 # Visualization
 matplotlib>=3.4.0
 
-# Jupyter notebook support (optional, if running the notebook)
+# Jupyter notebook support
 jupyter>=1.0.0
 ipykernel>=6.0.0
+
+# High-performance computing
+numba>=0.57.0
+
+# Data processing
+fastparquet>=0.8.0
