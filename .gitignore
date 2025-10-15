@@ -5,6 +5,7 @@ kidney/
 brain/
 CSGO/
 Bin2Cell_Validation/
+cell-seg-go/
 
 # Large data files
 *.png
@@ -20,6 +21,10 @@ Bin2Cell_Validation/
 # Results and outputs
 *.csv
 *.html
+*.sbatch
+*.out
+*.err
+*.log
 
 # Python cache
 __pycache__/
