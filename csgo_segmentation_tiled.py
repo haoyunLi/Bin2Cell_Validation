@@ -107,17 +107,6 @@ def process_tile(seg_model, img, tile_coords, output_dir, tile_idx, cell_size, i
     # Crop the tile from the full image
     tile_img = img.crop((x, y, x + w, y + h))
 
-    # Check if tile is mostly empty (background)
-    tile_array = np.array(tile_img)
-    # Check if tile has very little variation (likely empty background)
-    if tile_array.std() < 5:  # Very low variance = empty tile
-        logger.info(f"Tile {tile_idx} appears to be empty (no tissue), skipping...")
-        del tile_img
-        gc.collect()
-        # Return a blank segmentation result
-        blank_result = np.zeros((h, w, 3), dtype=np.uint8)
-        return blank_result, tile_coords
-
     # Save tile temporarily
     tile_path = output_dir / f'tile_{tile_idx:04d}.png'
     tile_img.save(tile_path)
