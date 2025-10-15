@@ -98,7 +98,7 @@ def process_tile(seg_model, img, tile_coords, output_dir, tile_idx, cell_size, i
         img_resolution: Image resolution parameter for CSGO
 
     Returns:
-        Segmentation result for this tile and its coordinates
+        Segmentation result for this tile and its coordinates, or None if tile is empty/failed
     """
     x, y, w, h = tile_coords
 
@@ -106,6 +106,17 @@ def process_tile(seg_model, img, tile_coords, output_dir, tile_idx, cell_size, i
 
     # Crop the tile from the full image
     tile_img = img.crop((x, y, x + w, y + h))
+
+    # Check if tile is mostly empty (background)
+    tile_array = np.array(tile_img)
+    # Check if tile has very little variation (likely empty background)
+    if tile_array.std() < 5:  # Very low variance = empty tile
+        logger.info(f"Tile {tile_idx} appears to be empty (no tissue), skipping...")
+        del tile_img
+        gc.collect()
+        # Return a blank segmentation result
+        blank_result = np.zeros((h, w, 3), dtype=np.uint8)
+        return blank_result, tile_coords
 
     # Save tile temporarily
     tile_path = output_dir / f'tile_{tile_idx:04d}.png'
@@ -129,12 +140,32 @@ def process_tile(seg_model, img, tile_coords, output_dir, tile_idx, cell_size, i
 
         logger.info(f"Tile {tile_idx} processed successfully")
 
+    except ValueError as e:
+        # Handle specific errors from empty tiles or tiles with no nuclei
+        if "zero-size array" in str(e) or "minimum which has no identity" in str(e):
+            logger.warning(f"Tile {tile_idx} has no detectable cells, returning empty segmentation")
+            # Clean up temporary tile
+            if tile_path.exists():
+                tile_path.unlink()
+            # Return a blank segmentation result
+            blank_result = np.zeros((h, w, 3), dtype=np.uint8)
+            return blank_result, tile_coords
+        else:
+            # Re-raise other ValueErrors
+            logger.error(f"Error processing tile {tile_idx}: {e}")
+            if tile_path.exists():
+                tile_path.unlink()
+            raise
+
     except Exception as e:
         logger.error(f"Error processing tile {tile_idx}: {e}")
         # Clean up temporary tile
         if tile_path.exists():
             tile_path.unlink()
-        raise
+        # Return blank result instead of crashing
+        logger.warning(f"Returning blank segmentation for failed tile {tile_idx}")
+        blank_result = np.zeros((h, w, 3), dtype=np.uint8)
+        return blank_result, tile_coords
 
     # Clean up temporary tile
     tile_path.unlink()
@@ -257,9 +288,11 @@ def main():
     img_size = img.size
     logger.info(f"Image size: {img_size[0]} x {img_size[1]} pixels")
 
-    # Create tiles (4096x4096 with 256 pixel overlap)
-    tile_size = 4096
-    overlap = 256
+    # Create tiles (1024x1024 with 64 pixel overlap)
+    # Note: CSGO is designed for small patches (~500-1000px).
+    # Smaller tiles = faster processing per tile.
+    tile_size = 1024
+    overlap = 64
     tiles = create_tiles(img_size, tile_size=tile_size, overlap=overlap)
     logger.info(f"Created {len(tiles)} tiles (tile_size={tile_size}, overlap={overlap})")
     logger.info("="*70)
@@ -269,6 +302,7 @@ def main():
     seg_model = CSGO(
         yolo_path=str(yolo_path),
         unet_path=str(unet_path),
+        gpu=True,  # Enable GPU acceleration
         save=False,  # Don't save individual tiles
         output_dir=str(tiles_dir)
     )

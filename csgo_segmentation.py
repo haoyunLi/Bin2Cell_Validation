@@ -88,6 +88,7 @@ def main():
     seg_model = CSGO(
         yolo_path=str(yolo_path),
         unet_path=str(unet_path),
+        gpu=True,  # Enable GPU acceleration
         save=True,
         output_dir=str(output_dir)
     )
