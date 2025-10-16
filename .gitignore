@@ -7,6 +7,7 @@ CSGO/
 Bin2Cell_Validation/
 cell-seg-go/
 csgo_segmentation_output/
+cellannotation_results/
 
 # Large data files
 *.png

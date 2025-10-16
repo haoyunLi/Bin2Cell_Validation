@@ -17,3 +17,8 @@ numba>=0.57.0
 
 # Data processing
 fastparquet>=0.8.0
+
+# Cell type annotation
+celltypist>=1.7.0
+scanpy>=1.11.0
+scikit-misc>=0.5.0

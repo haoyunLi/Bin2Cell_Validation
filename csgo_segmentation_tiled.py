@@ -210,6 +210,8 @@ def stitch_tiles(tile_results, full_size, overlap=256):
 
         # Accumulate weighted results
         if len(stitched.shape) == 3:
+            # For RGB images, expand tile_weight to 3 channels
+            tile_weight_3d = tile_weight[:, :, np.newaxis]  # Shape: (h, w, 1)
             for c in range(stitched.shape[2]):
                 stitched[y:y+h, x:x+w, c] += (result[:h, :w, c] * tile_weight).astype(np.uint8)
         else:
@@ -221,8 +223,9 @@ def stitch_tiles(tile_results, full_size, overlap=256):
     # Normalize by weights (avoid division by zero)
     weight_map = np.maximum(weight_map, 1e-6)
     if len(stitched.shape) == 3:
-        for c in range(stitched.shape[2]):
-            stitched[:, :, c] = (stitched[:, :, c] / weight_map).astype(np.uint8)
+        # Expand weight_map to 3 channels for broadcasting
+        weight_map_3d = weight_map[:, :, np.newaxis]  # Shape: (h, w, 1)
+        stitched = (stitched / weight_map_3d).astype(np.uint8)
     else:
         stitched = (stitched / weight_map).astype(np.uint8)
 
