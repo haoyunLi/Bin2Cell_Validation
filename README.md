@@ -20,6 +20,8 @@ The validation pipeline consists of three main steps:
 - **Output:** Cell segmentation masks with boundaries for nucleus, cytoplasm, and cell membrane
 
 **Implementation:**
+
+- Script: `csgo_segmentation.py` - Processes small images at once to get whole cellseg
 - Script: `csgo_segmentation_tiled.py` - Processes large images in tiles to handle memory constraints
 - SBATCH: `run_csgo_segmentation.sbatch` - HPC submission script
 
@@ -33,6 +35,7 @@ The validation pipeline consists of three main steps:
 - **Output:** Cell type annotations for each bin, showing the distribution of cell types in the tissue
 
 **Implementation:**
+
 - Script: `run_celltypist_annotation.py` - Annotates clusters and generates UMAP visualizations
 - SBATCH: `run_cellannotation.sbatch` - HPC submission script
 
@@ -41,6 +44,7 @@ The validation pipeline consists of three main steps:
 **Objective:** Create ground truth cell-level gene expression by assigning single-cell RNA-seq profiles to segmented cells.
 
 **Workflow:**
+
 1. **Find matching single-cell dataset:** Identify a single-cell RNA-seq dataset from the same tissue type with matching cell type composition
 2. **Gene localization analysis:** Perform GO (Gene Ontology) analysis to determine which genes are expressed in:
    - Nucleus
@@ -53,6 +57,7 @@ The validation pipeline consists of three main steps:
    - Subcellular compartment-specific gene expression (genes assigned to nucleus, cytoplasm, or membrane regions of the segmented cell based on their localization)
 
 **Output:**
+
 - Cell-level ground truth with known gene expression profiles
 - Spatial coordinates of each cell
 - Subcellular gene localization information
@@ -62,11 +67,13 @@ The validation pipeline consists of three main steps:
 The final ground truth dataset consists of three components:
 
 1. **Cell-level data (from single-cell assignment):**
+
    - Gene expression matrix at single-cell resolution
    - Cell type labels
    - Cell boundaries and spatial coordinates
 
 2. **Bin-level data (from Visium HD):**
+
    - Gene expression from 2μm bins
    - Spatial coordinates of bins
    - Known overlap with segmented cells
@@ -90,6 +97,7 @@ With this ground truth, we can evaluate bin-to-cell assignment tools by:
 ## Performance Metrics
 
 Tools can be evaluated on:
+
 - Gene expression correlation (predicted vs. ground truth)
 - Cell boundary overlap (IoU with CSGO masks)
 - Cell type accuracy (concordance with CellTypist annotations)
