@@ -421,7 +421,7 @@ def main():
     data_path = visium_dir / 'filtered_feature_bc_matrix.h5'
     clustering_path = visium_dir / 'analysis' / 'clustering' / 'gene_expression_graphclust' / 'clusters.csv'
     umap_path = visium_dir / 'analysis' / 'umap' / 'gene_expression_2_components' / 'projection.csv'
-    output_dir = base_dir / 'cellannotation_results'
+    output_dir = base_dir / 'cellannotation_results_brain'
     output_dir.mkdir(exist_ok=True)
 
     logger.info("="*70)
@@ -434,16 +434,87 @@ def main():
     # Preprocess
     adata = preprocess_for_celltypist(adata)
 
-    # Run CellTypist
-    # Available mouse brain models:
-    # - 'Mouse_Whole_Brain.pkl': Very detailed (231 cell types) - High resolution
-    # - 'Developing_Mouse_Brain.pkl': Developmental stages - May have fewer types
-    # - 'Mouse_Isocortex_Hippocampus.pkl': Focused on cortex/hippocampus only
-    adata, predictions = run_celltypist(
-        adata,
-        model='Developing_Mouse_Brain.pkl',
-        majority_voting=True
+    # Cluster-level annotation: Create pseudo-bulk profiles for each cluster
+    logger.info("\nCreating pseudo-bulk profiles for each cluster...")
+    clusters = adata.obs['cluster'].unique()
+    logger.info(f"Found {len(clusters)} clusters")
+
+    # Create pseudo-bulk by averaging expression within each cluster
+    cluster_profiles = []
+    cluster_ids = []
+
+    for cluster in sorted(clusters):
+        cluster_mask = adata.obs['cluster'] == cluster
+        cluster_data = adata[cluster_mask]
+
+        # Average expression across all spots in cluster
+        pseudo_bulk = cluster_data.X.mean(axis=0)
+        cluster_profiles.append(pseudo_bulk)
+        cluster_ids.append(cluster)
+
+        logger.info(f"  Cluster {cluster}: {cluster_mask.sum()} spots")
+
+    # Create AnnData for pseudo-bulk clusters
+    import numpy as np
+    cluster_adata = sc.AnnData(
+        X=np.vstack(cluster_profiles),
+        obs=pd.DataFrame({'cluster': cluster_ids}),
+        var=adata.var.copy()
     )
+
+    # Re-normalize cluster pseudo-bulk data for CellTypist
+    # CellTypist expects log-normalized data to 10,000 counts
+    logger.info("Re-normalizing cluster pseudo-bulk profiles for CellTypist...")
+
+    # Convert back from log space to counts (inverse of log1p)
+    cluster_adata.X = np.expm1(cluster_adata.X)
+
+    # Re-normalize to 10,000 counts per cluster
+    sc.pp.normalize_total(cluster_adata, target_sum=1e4)
+
+    # Log transform
+    sc.pp.log1p(cluster_adata)
+
+    logger.info("Cluster profiles normalized to 10,000 counts")
+
+    # Run CellTypist on cluster pseudo-bulk profiles
+    logger.info("\nRunning CellTypist on cluster-level profiles...")
+    # Available models by tissue type:
+    # Mouse Brain:
+    #   - 'Mouse_Whole_Brain.pkl': Very detailed (231 cell types)
+    #   - 'Developing_Mouse_Brain.pkl': Developmental stages
+    # Mouse Gut/Intestine:
+    #   - 'Adult_Mouse_Gut.pkl': Specifically for intestinal tissue
+    #   - 'Cells_Intestinal_Tract.pkl': Alternative gut model
+    cluster_adata, cluster_predictions = run_celltypist(
+        cluster_adata,
+        model='Mouse_Whole_Brain.pkl',
+        majority_voting=False  # No majority voting for cluster-level
+    )
+
+    # Create cluster to cell type mapping
+    cluster_to_celltype = dict(zip(
+        cluster_adata.obs['cluster'],
+        cluster_adata.obs['celltypist_cell_type']
+    ))
+
+    # Assign cell types to all spots based on their cluster
+    logger.info("\nAssigning cell types to spots based on cluster annotations...")
+    adata.obs['celltypist_cell_type'] = adata.obs['cluster'].map(cluster_to_celltype)
+
+    # Log cluster annotations
+    logger.info("\nCluster-level cell type annotations:")
+    for cluster in sorted(cluster_ids):
+        cell_type = cluster_to_celltype[cluster]
+        n_spots = (adata.obs['cluster'] == cluster).sum()
+        percentage = (n_spots / len(adata)) * 100
+        logger.info(f"  Cluster {cluster} -> {cell_type}: {n_spots} spots ({percentage:.2f}%)")
+
+    # Log overall cell type distribution
+    logger.info("\nOverall cell type distribution:")
+    for cell_type, count in adata.obs['celltypist_cell_type'].value_counts().items():
+        percentage = (count / len(adata)) * 100
+        logger.info(f"  {cell_type}: {count} spots ({percentage:.2f}%)")
 
     # Load existing UMAP or compute new one
     logger.info("\nLoading UMAP coordinates for visualization...")
@@ -460,10 +531,15 @@ def main():
     adata.write_h5ad(adata_path)
     logger.info(f"Annotated data saved to {adata_path}")
 
-    # Save predictions
-    pred_path = output_dir / 'celltypist_predictions.csv'
-    predictions.predicted_labels.to_csv(pred_path)
-    logger.info(f"Predictions saved to {pred_path}")
+    # Save cluster-level predictions
+    pred_path = output_dir / 'celltypist_cluster_predictions.csv'
+    cluster_predictions.predicted_labels.to_csv(pred_path)
+    logger.info(f"Cluster predictions saved to {pred_path}")
+
+    # Save cluster to cell type mapping
+    mapping_path = output_dir / 'cluster_to_celltype_mapping.csv'
+    pd.DataFrame.from_dict(cluster_to_celltype, orient='index', columns=['cell_type']).to_csv(mapping_path)
+    logger.info(f"Cluster mapping saved to {mapping_path}")
 
     # Create summary
     summary_df = summarize_results(adata, output_dir)
@@ -479,18 +555,18 @@ def main():
     logger.info(f"Output directory: {output_dir}")
     logger.info("\nGenerated files:")
     logger.info("  - visium_hd_annotated.h5ad")
-    logger.info("  - celltypist_predictions.csv")
+    logger.info("  - celltypist_cluster_predictions.csv")
+    logger.info("  - cluster_to_celltype_mapping.csv")
     logger.info("  - cell_type_summary.csv")
     logger.info("  - umap_celltypes.png")
-    logger.info("  - umap_confidence.png")
     logger.info("  - umap_clusters.png")
     logger.info("  - umap_comparison.png")
     logger.info("  - cluster_celltype_heatmap.png")
     logger.info("  - celltype_proportions.png")
     logger.info("="*70)
 
-    return adata, predictions
+    return adata, cluster_predictions
 
 
 if __name__ == "__main__":
-    adata, predictions = main()
+    adata, cluster_predictions = main()

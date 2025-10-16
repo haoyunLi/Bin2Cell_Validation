@@ -8,6 +8,8 @@ Bin2Cell_Validation/
 cell-seg-go/
 csgo_segmentation_output/
 cellannotation_results/
+small_intenstine/
+
 
 # Large data files
 *.png
@@ -21,12 +23,12 @@ cellannotation_results/
 *.cloupe
 
 # Results and outputs
-*.csv
 *.html
 *.sbatch
 *.out
 *.err
 *.log
+*.h5ad
 
 # Python cache
 __pycache__/
