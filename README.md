@@ -56,6 +56,10 @@ The validation pipeline consists of three main steps:
    - One-to-one mapping (no cell reuse)
    - Subcellular compartment-specific gene expression (genes assigned to nucleus, cytoplasm, or membrane regions of the segmented cell based on their localization)
 
+**Implementation:**
+
+- Script: `gene_localization_GO_analysis.py` - Classify genes by subcellular localization (nucleus, cytoplasm, cell membrane) using GO term analysis
+
 **Output:**
 
 - Cell-level ground truth with known gene expression profiles

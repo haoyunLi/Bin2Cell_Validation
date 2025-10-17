@@ -212,8 +212,7 @@ def stitch_tiles(tile_results, full_size, overlap=256):
         if len(stitched.shape) == 3:
             # For RGB images, expand tile_weight to 3 channels
             tile_weight_3d = tile_weight[:, :, np.newaxis]  # Shape: (h, w, 1)
-            for c in range(stitched.shape[2]):
-                stitched[y:y+h, x:x+w, c] += (result[:h, :w, c] * tile_weight).astype(np.uint8)
+            stitched[y:y+h, x:x+w] += (result[:h, :w] * tile_weight_3d).astype(np.uint8)
         else:
             stitched[y:y+h, x:x+w] += (result[:h, :w] * tile_weight).astype(np.uint8)
 
