@@ -9,7 +9,8 @@ cell-seg-go/
 csgo_segmentation_output/
 cellannotation_results/
 small_intenstine/
-
+cellpose/
+cellpose_sam_output/
 
 # Large data files
 *.png
@@ -21,6 +22,7 @@ small_intenstine/
 *.tar
 *.tar.gz
 *.cloupe
+*.gz
 
 # Results and outputs
 *.html
