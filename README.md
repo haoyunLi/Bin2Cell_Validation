@@ -14,16 +14,33 @@ The validation pipeline consists of three main steps:
 
 **Objective:** Perform unbiased whole-cell segmentation on the full H&E image to obtain cell boundaries.
 
-- **Tool Used:** [CSGO (Cell Segmentation with Globally Optimized boundaries)](https://github.com/QBRC/CSGO)
-- **Why CSGO:** Provides whole-cell segmentation without bias or information leakage, as it's independent of the transcriptomic data
+- **Tool Used:** [Cellpose-SAM](https://cellpose.readthedocs.io/)
+- **Why Cellpose-SAM:** Provides accurate whole-cell segmentation with state-of-the-art performance using a foundation model, independent of transcriptomic data to avoid information leakage
+- **Models Used:**
+  - **Cellpose-SAM model**: For whole-cell segmentation
+  - **Cellpose nuclei model**: For nuclear segmentation
 - **Input:** Full-resolution Visium HD H&E image
-- **Output:** Cell segmentation masks with boundaries for nucleus, cytoplasm, and cell membrane
+- **Output:** Cell segmentation masks with subcellular compartment assignments:
+  - **Boundary** (cell membrane regions)
+  - **Nuclear** (nucleus regions)
+  - **Cytoplasm** (interior - nuclear)
+  - Background pixels
 
 **Implementation:**
 
-- Script: `csgo_segmentation.py` - Processes small images at once to get whole cellseg
-- Script: `csgo_segmentation_tiled.py` - Processes large images in tiles to handle memory constraints
-- SBATCH: `run_csgo_segmentation.sbatch` - HPC submission script
+- Script: `cellpose_sam_segmentation.py` - Processes tissue images for whole-cell and nuclear segmentation
+- **Output Files:**
+  - `*_cell_masks.npy` - Full-resolution whole-cell segmentation masks
+  - `*_nuclear_masks.npy` - Nuclear segmentation masks
+  - `*_boundary_mask.npy` - Cell boundary masks
+  - `*_pixel_to_cell_mapping_full.csv.gz` - Compressed pixel-level mapping with columns:
+    - `x, y`: pixel coordinates
+    - `cell_id`: which cell this pixel belongs to
+    - `is_boundary`: membrane regions
+    - `is_nuclear`: nucleus regions
+    - `is_cytoplasm`: cytoplasm regions (interior - nuclear)
+    - `is_interior`: all non-boundary regions
+  - Visualization files (downsampled for performance)
 
 ### Step 2: Cell Type Annotation via CellTypist
 
@@ -82,10 +99,13 @@ The final ground truth dataset consists of three components:
    - Spatial coordinates of bins
    - Known overlap with segmented cells
 
-3. **Segmentation masks (from CSGO):**
+3. **Segmentation masks (from Cellpose-SAM):**
    - Whole-cell boundaries
-   - Subcellular compartments (nucleus, cytoplasm, membrane)
-   - Pixel-level annotations
+   - Subcellular compartments:
+     - **Boundary** (cell membrane)
+     - **Nuclear** (nucleus)
+     - **Cytoplasm** (computed as interior - nuclear)
+   - Pixel-level annotations for all compartments
 
 ## Validation Approach
 
@@ -95,7 +115,7 @@ With this ground truth, we can evaluate bin-to-cell assignment tools by:
 2. **Tool Output:** The tool assigns bin-level data to predicted cells
 3. **Comparison:** Compare the tool's output against our ground truth:
    - **Gene expression recovery:** How well does the tool recover the true cell-level gene expression from single-cell data?
-   - **Cell boundary accuracy:** How well do the predicted cell boundaries match the CSGO segmentation masks?
+   - **Cell boundary accuracy:** How well do the predicted cell boundaries match the Cellpose-SAM segmentation masks?
    - **Cell type assignment:** Are bins correctly assigned to the right cell types?
 
 ## Performance Metrics
@@ -103,7 +123,7 @@ With this ground truth, we can evaluate bin-to-cell assignment tools by:
 Tools can be evaluated on:
 
 - Gene expression correlation (predicted vs. ground truth)
-- Cell boundary overlap (IoU with CSGO masks)
+- Cell boundary overlap (IoU with Cellpose-SAM masks)
 - Cell type accuracy (concordance with CellTypist annotations)
 - Spatial accuracy (correct bin-to-cell assignments)
 
@@ -120,11 +140,16 @@ conda activate ./Bin2Cell_Validation
 pip install -r requirements.txt
 ```
 
-### 2. Install CSGO
+### 2. Install Cellpose-SAM
 
 ```bash
-git clone git@github.com:QBRC/CSGO.git
-cd CSGO
-conda env create -f environment.yml
-conda activate cell-seg-go
+# Create Cellpose environment
+conda create --prefix ./cellpose python=3.10 -y
+conda activate ./cellpose
+
+# Install Cellpose with SAM support
+pip install cellpose[gui]
+
+# Optional: Install additional dependencies for large image processing
+pip install scikit-image pandas
 ```
