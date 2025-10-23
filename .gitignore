@@ -11,6 +11,7 @@ cellannotation_results/
 small_intenstine/
 cellpose/
 cellpose_sam_output/
+cellpose_sam_small_intenstine_output/
 
 # Large data files
 *.png

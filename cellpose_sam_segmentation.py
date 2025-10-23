@@ -269,7 +269,7 @@ def main():
     # Run nuclear segmentation
     logger.info("Running nuclear segmentation...")
     logger.info("Initializing Cellpose nuclei model...")
-    nuclei_model = models.Cellpose(gpu=use_gpu, model_type='nuclei')
+    nuclei_model = models.CellposeModel(gpu=use_gpu, model_type='nuclei')
     logger.info("Nuclei model initialized successfully")
 
     logger.info("Running nuclear segmentation...")
