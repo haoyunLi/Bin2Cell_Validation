@@ -417,15 +417,15 @@ def main():
 
     # Paths
     base_dir = Path.cwd()
-    visium_dir = base_dir / 'brain' / 'output' / 'binned_outputs' / 'square_008um'
+    visium_dir = base_dir / 'Human_kidney' / 'output' / 'binned_outputs' / 'square_008um'
     data_path = visium_dir / 'filtered_feature_bc_matrix.h5'
     clustering_path = visium_dir / 'analysis' / 'clustering' / 'gene_expression_graphclust' / 'clusters.csv'
     umap_path = visium_dir / 'analysis' / 'umap' / 'gene_expression_2_components' / 'projection.csv'
-    output_dir = base_dir / 'cellannotation_results_brain'
+    output_dir = base_dir / 'cellannotation_results_human_kidney'
     output_dir.mkdir(exist_ok=True)
 
     logger.info("="*70)
-    logger.info("CellTypist Annotation for Visium HD Mouse Brain")
+    logger.info("CellTypist Annotation for Visium HD")
     logger.info("="*70)
 
     # Load data
@@ -479,16 +479,9 @@ def main():
 
     # Run CellTypist on cluster pseudo-bulk profiles
     logger.info("\nRunning CellTypist on cluster-level profiles...")
-    # Available models by tissue type:
-    # Mouse Brain:
-    #   - 'Mouse_Whole_Brain.pkl': Very detailed (231 cell types)
-    #   - 'Developing_Mouse_Brain.pkl': Developmental stages
-    # Mouse Gut/Intestine:
-    #   - 'Adult_Mouse_Gut.pkl': Specifically for intestinal tissue
-    #   - 'Cells_Intestinal_Tract.pkl': Alternative gut model
     cluster_adata, cluster_predictions = run_celltypist(
         cluster_adata,
-        model='Mouse_Whole_Brain.pkl',
+        model='Immune_All_Low.pkl',
         majority_voting=False  # No majority voting for cluster-level
     )
 

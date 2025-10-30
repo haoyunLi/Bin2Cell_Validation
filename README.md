@@ -8,39 +8,87 @@ This validation method creates ground truth data by combining whole-cell segment
 
 ## Pipeline Overview
 
-The validation pipeline consists of three main steps:
+The validation pipeline consists of the following steps:
+
+### Step 0: Crop Visium HD Image to Tissue Region
+
+**Objective:** Extract and crop the full-resolution microscope image to only the tissue-covered region.
+
+- **Tool:** `crop_visium_hd_image.py` module 
+- **Input:**
+  - Full-resolution microscope image (.tif, .tiff, .btf formats)
+  - Tissue positions parquet file from Space Ranger output
+- **Output:**
+  - Cropped image containing only Visium HD tissue region
+  - Pixel-to-spot mapping array
+  - Filtered tissue positions dataframe
+  - Visualization of crop boundaries
+
+**Implementation:**
+
+- Module: `crop_visium_hd_image.py` - Core cropping functionality
+- Script: `crop_visium_hd_script.py` - Batch processing script
+- Notebook: `crop_visium_hd_notebook.ipynb` - Interactive tutorial
+
+**Configuration:** Edit paths in `crop_visium_hd_script.py` or `crop_visium_hd_notebook.ipynb`:
+```python
+df_path = 'your_data/binned_outputs/square_002um/spatial/tissue_positions.parquet'
+img_path = 'your_data/input/tissue_image.tif'
+output_path = 'cropped_image.png'
+```
 
 ### Step 1: Generate Whole-Cell Segmentation (Ground Truth Masks)
 
-**Objective:** Perform unbiased whole-cell segmentation on the full H&E image to obtain cell boundaries.
+**Objective:** Perform unbiased whole-cell segmentation on the full H&E image to obtain cell boundaries with subcellular compartment classification.
 
-- **Tool Used:** [Cellpose-SAM](https://cellpose.readthedocs.io/)
-- **Why Cellpose-SAM:** Provides accurate whole-cell segmentation with state-of-the-art performance using a foundation model, independent of transcriptomic data to avoid information leakage
-- **Models Used:**
-  - **Cellpose-SAM model**: For whole-cell segmentation
-  - **Cellpose nuclei model**: For nuclear segmentation
-- **Input:** Full-resolution Visium HD H&E image
-- **Output:** Cell segmentation masks with subcellular compartment assignments:
-  - **Boundary** (cell membrane regions)
-  - **Nuclear** (nucleus regions)
+- **Tool Used:** [Cellpose cyto3](https://cellpose.readthedocs.io/)
+- **Why Cellpose cyto3:**
+  - Specifically trained for brightfield/H&E images with built-in nuclear detection
+  - Provides accurate whole-cell segmentation with state-of-the-art performance
+  - Independent of transcriptomic data to avoid information leakage
+  - Single model for both cell and nuclear segmentation (more consistent)
+
+**Model Configuration:**
+- **Cell Segmentation:**
+  - Model: `cyto3` (optimized for brightfield images)
+  - `flow_threshold = 0.4` (default, maintains cell quality)
+  - `cellprob_threshold = -2.0` (more permissive, includes dim pixels for bigger/complete cells)
+  - `diameter = None` (auto-estimate)
+
+- **Nuclear Segmentation:**
+  - Method: Extract from cyto3's built-in nuclear probability map
+  - `nuclear_threshold = 0.65` (balanced detection, aims for ~70% nuclear, ~30% cytoplasm)
+  - Uses label-based component detection for individual nuclei
+
+- **Boundary Detection:**
+  - Method: 4-connectivity 
+  - Result: Thin, precise boundaries suitable for transcript assignment
+
+**Input:** Full-resolution Visium HD H&E image (cropped tissue region)
+
+**Output:** Cell segmentation masks with subcellular compartment assignments:
+  - **Boundary** (cell membrane regions, 4-connected)
+  - **Nuclear** (nucleus regions matched 1:1 with cells)
   - **Cytoplasm** (interior - nuclear)
   - Background pixels
 
 **Implementation:**
 
-- Script: `cellpose_sam_segmentation.py` - Processes tissue images for whole-cell and nuclear segmentation
-- **Output Files:**
-  - `*_cell_masks.npy` - Full-resolution whole-cell segmentation masks
-  - `*_nuclear_masks.npy` - Nuclear segmentation masks
-  - `*_boundary_mask.npy` - Cell boundary masks
+- Script: `cellpose_segmentation.py` - Optimized pipeline for whole-cell and nuclear segmentation
+
+**Output Files:**
+  - `*_cell_masks.tif/.npy` - Full-resolution whole-cell segmentation masks
+  - `*_nuclear_masks.tif/.npy` - Nuclear segmentation masks (matched to cells)
+  - `*_boundary_mask.npy` - Cell boundary masks (4-connected)
+  - `*_nuclear_binary_mask.npy` - Binary nuclear mask (matched to cells, interior only)
   - `*_pixel_to_cell_mapping_full.csv.gz` - Compressed pixel-level mapping with columns:
     - `x, y`: pixel coordinates
-    - `cell_id`: which cell this pixel belongs to
-    - `is_boundary`: membrane regions
-    - `is_nuclear`: nucleus regions
-    - `is_cytoplasm`: cytoplasm regions (interior - nuclear)
-    - `is_interior`: all non-boundary regions
-  - Visualization files (downsampled for performance)
+    - `cell_id`: which cell this pixel belongs to (0 = background)
+    - `is_boundary`: 1 if membrane pixel (4-connected)
+    - `is_nuclear`: 1 if nuclear pixel (matched to cell, interior only)
+    - `is_cytoplasm`: 1 if cytoplasm pixel (interior - nuclear)
+    - `is_interior`: 1 if non-boundary pixel inside cell
+  - `*_cell_nuclear_overlay_downsampled_1x.png` - Visualization (cells with nuclei overlaid)
 
 ### Step 2: Cell Type Annotation via CellTypist
 
@@ -88,18 +136,16 @@ The validation pipeline consists of three main steps:
 The final ground truth dataset consists of three components:
 
 1. **Cell-level data (from single-cell assignment):**
-
    - Gene expression matrix at single-cell resolution
    - Cell type labels
    - Cell boundaries and spatial coordinates
 
 2. **Bin-level data (from Visium HD):**
-
    - Gene expression from 2μm bins
    - Spatial coordinates of bins
    - Known overlap with segmented cells
 
-3. **Segmentation masks (from Cellpose-SAM):**
+3. **Segmentation masks (from Cellpose):**
    - Whole-cell boundaries
    - Subcellular compartments:
      - **Boundary** (cell membrane)
@@ -140,14 +186,14 @@ conda activate ./Bin2Cell_Validation
 pip install -r requirements.txt
 ```
 
-### 2. Install Cellpose-SAM
+### 2. Install Cellpose
 
 ```bash
 # Create Cellpose environment
 conda create --prefix ./cellpose python=3.10 -y
 conda activate ./cellpose
 
-# Install Cellpose with SAM support
+# Install Cellpose 
 pip install cellpose[gui]
 
 # Optional: Install additional dependencies for large image processing

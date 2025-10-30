@@ -12,6 +12,12 @@ small_intenstine/
 cellpose/
 cellpose_sam_output/
 cellpose_sam_small_intenstine_output/
+Human_kidney/
+cellpose_sam_human_kidney_output/
+Human_Colorectal/
+cellpose_sam_human_colorectal_output/
+cellannotation_results_human_colorectal/
+
 
 # Large data files
 *.png
@@ -24,6 +30,7 @@ cellpose_sam_small_intenstine_output/
 *.tar.gz
 *.cloupe
 *.gz
+
 
 # Results and outputs
 *.html
@@ -58,9 +65,4 @@ venv.bak/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Keep only code and requirements
-!*.py
-!*.ipynb
-!requirements.txt
-!README.md
-!.gitignore
+
