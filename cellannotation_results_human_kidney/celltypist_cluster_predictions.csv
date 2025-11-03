@@ -1,5 +1,5 @@
 ,predicted_labels
-0,B cells
+0,Endothelial cells
 1,Endothelial cells
 2,Endothelial cells
 3,Epithelial cells
@@ -13,4 +13,4 @@
 11,Endothelial cells
 12,Endothelial cells
 13,Fibroblasts
-14,Age-associated B cells
+14,B cells

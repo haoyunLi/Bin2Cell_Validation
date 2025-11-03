@@ -17,6 +17,7 @@ cellpose_sam_human_kidney_output/
 Human_Colorectal/
 cellpose_sam_human_colorectal_output/
 cellannotation_results_human_colorectal/
+stardist_nuclear_output/
 
 
 # Large data files

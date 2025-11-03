@@ -369,8 +369,8 @@ def main():
 
     # Set segmentation parameters
     flow_threshold = 0.4  # Default: 0.4. Standard quality control for cell shapes
-    cellprob_threshold = -2.0  # Default: 0.0. DECREASE to include more pixels = BIGGER cells
-    diameter = None  # Let Cellpose estimate cell diameter automatically
+    cellprob_threshold = 0.0  # Default: 0.0. DECREASE to include more pixels = BIGGER cells
+    diameter = None 
     tile_norm_blocksize = 0  # Set to 100-200 for inhomogeneous brightness
 
     logger.info("Running segmentation...")
@@ -407,7 +407,7 @@ def main():
 
         # Threshold nuclear probability to create nuclear masks
         from skimage.measure import label
-        nuclear_threshold = 0.65  # Balanced - aims for ~65% nuclear, ~35% cytoplasm (0-1 range)
+        nuclear_threshold = 0.6 # Higher threshold = smaller nuclei
         nuclear_binary = (nuclear_prob > nuclear_threshold).astype(np.uint8)
 
         # Label connected components as individual nuclei

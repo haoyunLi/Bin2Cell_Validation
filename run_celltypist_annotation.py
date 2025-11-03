@@ -110,7 +110,7 @@ def preprocess_for_celltypist(adata, n_top_genes=3000):
     return adata
 
 
-def run_celltypist(adata, model='Mouse_Whole_Brain.pkl', majority_voting=True):
+def run_celltypist(adata, model='Immune_All_Low.pkl', majority_voting=True):
     """
     Run CellTypist cell type prediction.
 
@@ -481,7 +481,7 @@ def main():
     logger.info("\nRunning CellTypist on cluster-level profiles...")
     cluster_adata, cluster_predictions = run_celltypist(
         cluster_adata,
-        model='Immune_All_Low.pkl',
+        model='Immune_All_High.pkl',
         majority_voting=False  # No majority voting for cluster-level
     )
 
