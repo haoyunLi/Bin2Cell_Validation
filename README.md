@@ -32,12 +32,6 @@ The validation pipeline consists of the following steps:
 
 **Configuration:** Edit paths in `crop_visium_hd_script.py` or `crop_visium_hd_notebook.ipynb`:
 
-```python
-df_path = 'your_data/binned_outputs/square_002um/spatial/tissue_positions.parquet'
-img_path = 'your_data/input/tissue_image.tif'
-output_path = 'cropped_image.png'
-```
-
 ### Step 1: Generate Whole-Cell Segmentation (Ground Truth Masks)
 
 **Objective:** Perform unbiased whole-cell segmentation on the full H&E image to obtain cell boundaries with subcellular compartment classification.
@@ -61,7 +55,7 @@ output_path = 'cropped_image.png'
 - **Nuclear Segmentation:**
 
   - Method: Extract from cyto3's built-in nuclear probability map
-  - `nuclear_threshold = 0.65` (balanced detection, aims for ~70% nuclear, ~30% cytoplasm)
+  - `nuclear_threshold = 0.6` 
   - Uses label-based component detection for individual nuclei
 
 - **Boundary Detection:**
@@ -131,6 +125,68 @@ output_path = 'cropped_image.png'
 
 **Note:** This is optional - Cellpose cyto3's built-in nuclear detection is already high quality. Use StarDist if you want to compare different nuclear segmentation methods or validate results.
 
+### Step 1.6: Cell Expansion Based on Nuclear:Cytoplasm Ratios
+
+**Objective:** Expand cell boundaries around nuclei to match biologically accurate nuclear:cytoplasm (N:C) ratios for each cell type.
+
+- **Tool Used:** `nuclear_expansion.py`
+- **Method:**
+  - Keeps nuclear regions EXACTLY the same (no changes to nuclei)
+  - Expands cytoplasm and cell boundaries outward from current edges
+  - Uses cell type-specific N:C ratio ranges from literature
+  - Expands each cell iteratively until it reaches the target N:C ratio for its cell type
+  - Uses circular morphological dilation (disk structuring element) for natural, elliptical cell shapes
+  - Handles overlapping cell boundaries during expansion (first-come-first-served for boundary pixels)
+  - Processes cells in batches for memory efficiency
+
+**Why This Matters:**
+- Cellpose often under-segments cells (conservative boundaries)
+- Many cell types have specific N:C ratios based on biology:
+  - Epithelial cells: 20-30% nuclear
+  - Immune cells: 40-60% nuclear (large nuclei, less cytoplasm)
+  - Neurons: 10-20% nuclear (extensive cytoplasm/dendrites)
+- Expanding cells to match biological ratios improves spatial accuracy
+
+**Input:**
+- **Pixel-to-cell mapping**: `*_pixel_to_cell_mapping_with_celltype.csv.gz` (with cell type annotations)
+- **N:C ratio ranges**: `cell_based_nuclear_range.csv` (cell type-specific nuclear percentage ranges)
+- **Nuclear masks**: Original nuclear segmentation (kept unchanged as anchor)
+
+**Output:**
+- **Expanded pixel mapping**: `*_pixel_to_cell_mapping_expanded.csv.gz` with updated:
+  - `is_cytoplasm`: Expanded cytoplasm regions
+  - `is_boundary`: Updated cell boundaries
+  - `is_interior`: Expanded cell interiors
+  - `is_nuclear`: Unchanged (nuclei stay the same)
+- **Expanded cell masks**: `*_cell_masks_expanded.npy` (updated cell segmentation)
+- **Visualization**: `*_nuclear_overlay_expanded.png` (nuclei in blue, expanded cytoplasm in red)
+- **Statistics**: Per-cell-type N:C ratio before/after expansion
+
+**Algorithm:**
+1. Load cell type-specific N:C ratio ranges from CSV
+2. Calculate current N:C ratio for each cell
+3. Identify cells that need expansion (below target ratio)
+4. For each cell:
+   - Calculate target expansion to reach desired N:C ratio
+   - Apply iterative morphological dilation (circular kernel)
+   - Stop when target ratio reached or max iterations exceeded
+5. Update pixel-to-cell mapping with expanded boundaries
+6. Generate visualization showing before/after comparison
+
+
+**Implementation:**
+- Script: `nuclear_expansion.py` - Cell boundary expansion using morphological dilation
+- Config: `cell_based_nuclear_range.csv` - Cell type-specific N:C ratio ranges
+
+**Example N:C Ratio Ranges:**
+```csv
+cell_type,min_nuclear_percentage,max_nuclear_percentage
+Epithelial cells,0.20,0.30
+Immune cells,0.40,0.60
+Fibroblasts,0.15,0.25
+Endothelial cells,0.25,0.35
+```
+
 ### Step 2: Cell Type Annotation via CellTypist
 
 **Objective:** Determine the cell type composition in the tissue to guide single-cell data selection.
@@ -143,7 +199,6 @@ output_path = 'cropped_image.png'
 **Implementation:**
 
 - Script: `run_celltypist_annotation.py` - Annotates clusters and generates UMAP visualizations
-- SBATCH: `run_cellannotation.sbatch` - HPC submission script
 
 ### Step 2.5: Map Cell Type Annotations to Segmented Cells
 
@@ -204,29 +259,179 @@ output_path = 'cropped_image.png'
 - Spatial coordinates of each cell
 - Subcellular gene localization information
 
+
+## Pseudo Visium HD Data Generation
+
+**Objective:** Create synthetic Visium HD data from single-cell RNA-seq data with known ground truth for validation purposes.
+
+- **Tool Used:** `create_pseudo_visium_hd.py`
+- **Configuration:** `config_pseudo_hd.py`
+
+**Purpose:**
+- Generate pseudo-spatial transcriptomics data where the ground truth is completely known
+- Assign single-cell RNA-seq profiles to specific spatial locations based on cell type matching
+- Distribute genes to 2μm bins using compartment-specific spatial kernels
+- Create data in 10X Visium HD format matching real data structure
+- Provides a controlled dataset for validating bin-to-cell assignment tools
+
+**Key Features:**
+- **Memory-efficient sparse matrix processing**: Handles 100K+ cells without OOM
+- **Subcellular gene distribution**: Uses biologically-informed spatial kernels:
+  - **Nuclear genes**: Gaussian distribution (center-weighted)
+  - **Cytoplasm genes**: Uniform distribution (equal probability)
+  - **Membrane genes**: Reverse Gaussian (higher near cell boundary)
+- **Overlapping bin handling**: Bins can belong to multiple cells (realistic!)
+- **Bin aggregation optimization**: Pre-aggregates pixels to 2μm bins for 50-100x speedup
+- **Chunked processing**: Processes matrix in chunks to avoid memory issues
+- **10X format output**: Matches original Visium HD structure (MTX + barcodes + features)
+
+**Workflow:**
+1. Load gene subcellular localization (nucleus, cytoplasm, membrane) from GO analysis
+2. Load single-cell RNA-seq data (H5 format) with cell type annotations
+3. Load pixel-to-cell mapping with expanded cell boundaries
+4. Assign single-cell profiles to segmented cells by cell type (random sampling with replacement)
+5. Distribute genes to 2μm bins using compartment-specific spatial kernels
+6. Aggregate expression using sparse matrix operations (memory efficient)
+7. Output in 10X Visium HD format matching original spatial structure
+
+**Input:**
+- **Pixel-to-cell mapping**: `*_pixel_to_cell_mapping_expanded.csv.gz` (with cell types and compartments)
+- **Gene localization**: `gene_localization_results/` (genes_nucleus.txt, genes_cytoplasm.txt, genes_cell_membrane.txt)
+- **Single-cell data**:
+  - Expression matrix: `KIRC_GSE159115_expression.h5` (custom H5 format)
+  - Metadata: `KIRC_GSE159115_CellMetainfo_table.tsv` (with cell type column)
+- **Original Visium HD structure**: `binned_outputs/square_002um/` (for barcode/feature matching)
+- **Configuration**: `config_pseudo_hd.py` (paths, parameters, optional cropping)
+
+**Output:**
+- **10X format matrix**:
+  - `filtered_feature_bc_matrix/matrix.mtx.gz` - Sparse expression matrix (genes × bins)
+  - `filtered_feature_bc_matrix/barcodes.tsv.gz` - Bin barcodes (format: s_002um_XXXXX_YYYYY-1)
+  - `filtered_feature_bc_matrix/features.tsv.gz` - Gene information (ENSG IDs + symbols)
+- **Ground truth mapping**: `ground_truth_cell_assignments.csv` (cell_id → sc_cell mapping)
+- **Spatial metadata**: Copied from original Visium HD data
+
+**Implementation:**
+- Script: `create_pseudo_visium_hd.py` - Memory-optimized pseudo data generation pipeline
+- Config: `config_pseudo_hd.py` - Paths and parameters (supports spatial cropping for testing)
+
+**Example Usage:**
+```bash
+# Full tissue processing
+python create_pseudo_visium_hd.py
+
+# Or edit config_pseudo_hd.py for cropped region (faster testing):
+CROP_REGION = {
+    'quantile': 0.2,  # Process first 20% of tissue
+    'min_bin_x': 0,
+    'min_bin_y': 0,
+    'max_bin_x': None,  # Auto-determined from quantile
+    'max_bin_y': None
+}
+```
+
+### Validate Cell Assignment Function
+
+**Objective:** Verify that the pseudo Visium HD data generation is working correctly by comparing bin expression to original single-cell profiles.
+
+- **Tool Used:** `validate_cell_assignments.py`
+- **Purpose:** Quality control script to validate that gene expression was correctly distributed to bins
+
+**Key Features:**
+- **Memory-efficient streaming**: Processes 33GB matrix files without OOM errors
+- **Sparse matrix operations**: Keeps data in sparse format throughout
+- **Subset loading**: Only loads bins needed for sampled cells (~1% of data)
+- **Vectorized validation**: Pre-computes lookups for 100x speedup
+
+**Validation Methods:**
+1. **Bin-to-cell assignment validation**:
+   - Samples cells from ground truth
+   - Identifies bins belonging to those cells
+   - Sums expression across all bins for each cell
+   - Compares to original single-cell expression
+   - Calculates Pearson correlation (expected: >0.7 for good quality)
+
+2. **Overlapping bins validation**:
+   - Identifies bins assigned to multiple cells
+   - Verifies these bins have higher expression than single-cell bins
+   - Expected: Overlapping bins have ~2x expression (additive)
+
+**Usage:**
+```bash
+# Basic validation (100 cells, ~15-20 min total)
+python validate_cell_assignments.py \
+    --pseudo_hd_dir pseudo_visium_hd_outpu_full \
+    --output_dir validation_results \
+    --sample_size 100
+
+# Large validation (1000 cells, ~20-25 min total)
+python validate_cell_assignments.py \
+    --pseudo_hd_dir pseudo_visium_hd_outpu_full \
+    --output_dir validation_results \
+    --sample_size 1000
+```
+
+**Parameters:**
+- `--pseudo_hd_dir`: Directory containing pseudo Visium HD output (with ground_truth_cell_assignments.csv)
+- `--output_dir`: Output directory for validation results (default: validation_results)
+- `--sample_size`: Number of cells to sample for validation (default: 100)
+  - Larger sample = more robust validation but longer runtime
+  - Each cell typically has 100-500 bins
+
+**Input Requirements:**
+- Pseudo HD matrix: `pseudo_hd_dir/filtered_feature_bc_matrix/` (10X format)
+- Ground truth: `pseudo_hd_dir/ground_truth_cell_assignments.csv`
+- Pixel mapping: `cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_expanded.csv.gz`
+- Single-cell data: `kidney_sc_data/KIRC_GSE159115_expression.h5` and metadata
+
+**Output:**
+- **Validation metrics**:
+  - Mean/median correlation (bin expression vs SC expression)
+  - % cells with correlation > 0.5, > 0.7
+  - Per-cell-type correlation breakdown
+  - Overlapping bin statistics
+- **CSV file**: `validation_results/cell_validation_details.csv` with per-cell results:
+  - `cell_id`, `cell_type`, `n_bins`
+  - `correlation_all`, `correlation_nonzero`
+  - `total_counts_bins`, `total_counts_sc`
+- **Visualization**: `validation_results/validation_results.png`
+  - Correlation distribution histogram
+  - Correlation by cell type
+  - Total counts comparison (SC vs bins)
+  - Overlapping vs single-cell bins expression
+
+
 ## Ground Truth Data Structure
 
-The final ground truth dataset consists of three components:
+The pseudo Visium HD ground truth dataset consists of:
 
-1. **Cell-level data (from single-cell assignment):**
+1. **Pseudo Visium HD binned data (2μm resolution):**
+   - Gene expression matrix in 10X Visium HD format (MTX + features + barcodes)
+   - Spatially-aware gene distribution based on subcellular localization:
+     - **Nuclear genes**: Gaussian distribution (center-weighted, more genes near nucleus center)
+     - **Cytoplasm genes**: Uniform distribution (equal probability across cytoplasm)
+     - **Membrane genes**: Reverse Gaussian (0-2μm from boundary, higher concentration near cell edge)
+   - Handles overlapping bins (bins can belong to multiple cells)
+   - Matches original Visium HD spatial structure and barcode format
 
-   - Gene expression matrix at single-cell resolution
-   - Cell type labels
-   - Cell boundaries and spatial coordinates
+2. **Ground truth cell assignments:**
+   - Mapping of segmented cell IDs to assigned single-cell profiles
+   - Saved as `ground_truth_cell_assignments.csv` with columns:
+     - `cell_id`: Segmented cell ID from Cellpose
+     - `sc_cell_index`: Which single-cell profile was assigned to this cell
+     - `cell_type`: Cell type annotation (matched between segmentation and scRNA-seq)
+     - `sc_cell_barcode`: Original single-cell barcode from scRNA-seq data
+   - Enables validation by comparing predicted assignments to known truth
 
-2. **Bin-level data (from Visium HD):**
-
-   - Gene expression from 2μm bins
-   - Spatial coordinates of bins
-   - Known overlap with segmented cells
-
-3. **Segmentation masks (from Cellpose):**
-   - Whole-cell boundaries
-   - Subcellular compartments:
-     - **Boundary** (cell membrane)
-     - **Nuclear** (nucleus)
-     - **Cytoplasm** (computed as interior - nuclear)
-   - Pixel-level annotations for all compartments
+3. **Expanded cell segmentation with compartments:**
+   - Pixel-to-cell mapping with subcellular compartment flags
+   - Cells expanded based on cell type-specific N:C ratios
+   - Compartment assignments used for spatial gene distribution:
+     - `is_nuclear`: Nuclear regions (kept unchanged from original segmentation)
+     - `is_cytoplasm`: Cytoplasm regions (expanded outward from nuclei)
+     - `is_boundary`: Cell membrane/boundary regions
+     - `is_interior`: Non-boundary pixels inside cell
+   - Aggregated to 2μm bin resolution for computational efficiency
 
 ## Validation Approach
 
@@ -253,7 +458,7 @@ Tools can be evaluated on:
 ### 1. Create Conda Environment
 
 ```bash
-# Create environment in local directory (to save space in home)
+# Create environment in local directory 
 conda create --prefix ./Bin2Cell_Validation python=3.12 -y
 conda activate ./Bin2Cell_Validation
 

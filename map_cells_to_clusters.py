@@ -3,9 +3,9 @@
 Add cell type annotations to Cellpose pixel-level segmentation results.
 
 This script:
-1. Loads Cellpose pixel-to-cell mapping CSV (2μm resolution pixels)
+1. Loads Cellpose pixel-to-cell mapping CSV
 2. Loads 8μm cluster annotations from tissue_positions.parquet
-3. Maps each 2μm pixel to its corresponding 8μm bin
+3. Maps each pixel DIRECTLY to 8μm bins using scaling factor (8μm / 0.2739 μm/pixel ≈ 29.2)
 4. Assigns cell type to each cell based on majority vote
 5. Adds 'cell_type' column to the Cellpose CSV
 
@@ -54,44 +54,16 @@ def load_8um_annotations(tissue_positions_path, cluster_mapping_path):
     return tissue_df, cluster_to_celltype
 
 
-def create_pixel_to_bin_mapping(tissue_df):
+def assign_cell_types(cellpose_csv_path, bins_8um_df, cluster_assignments, cluster_to_celltype, output_path):
     """
-    Create vectorized arrays for fast pixel-to-bin mapping.
+    Load Cellpose CSV, map pixels DIRECTLY to 8μm bins using scaling factor, assign cell types, and save.
 
-    For Visium HD:
-    - 2μm bins: each bin is 1 pixel at full resolution
-    - 8μm bins: each bin is 4x4 pixels at 2μm resolution
-
-    Args:
-        tissue_df: DataFrame with columns [barcode, pxl_col_in_fullres, pxl_row_in_fullres, array_row, array_col]
-
-    Returns:
-        Tuple of (bin_centers_array, barcodes_array) for vectorized lookup
-    """
-    logger.info("Creating vectorized pixel-to-bin mapping (2μm -> 8μm)...")
-
-    # Extract arrays for vectorized operations
-    barcodes = tissue_df['barcode'].values
-    center_cols = tissue_df['pxl_col_in_fullres'].values.astype(np.int32)
-    center_rows = tissue_df['pxl_row_in_fullres'].values.astype(np.int32)
-
-    # Stack into (N, 2) array for vectorized distance computation
-    bin_centers = np.column_stack([center_rows, center_cols])
-
-    logger.info(f"  Created vectorized mapping for {len(barcodes):,} bins")
-
-    return bin_centers, barcodes
-
-
-def assign_cell_types(cellpose_csv_path, bin_centers, barcodes, cluster_assignments, cluster_to_celltype, output_path):
-    """
-    Load Cellpose CSV, map pixels to 8μm bins using vectorized operations, assign cell types, and save.
+    This approach uses direct pixel-to-bin scaling (8μm / 0.2739 μm/pixel) which is simple and fast.
 
     Args:
         cellpose_csv_path: Path to Cellpose pixel_to_cell_mapping_full.csv.gz
-        bin_centers: numpy array (N, 2) of [row, col] for 8μm bin centers
-        barcodes: numpy array of barcodes corresponding to bin_centers
-        cluster_assignments: Dictionary mapping barcode -> cluster_id
+        bins_8um_df: DataFrame with 8μm bin positions (from square_008um/spatial/tissue_positions.parquet)
+        cluster_assignments: Dictionary mapping 8μm barcode -> cluster_id
         cluster_to_celltype: Dictionary mapping cluster_id -> cell_type
         output_path: Path to save output CSV with cell_type column
     """
@@ -108,59 +80,61 @@ def assign_cell_types(cellpose_csv_path, bin_centers, barcodes, cluster_assignme
     df = pd.concat(chunks, ignore_index=True)
     logger.info(f"  Loaded {len(df):,} total pixels")
 
-    # Map each pixel to its 8μm bin using VECTORIZED operations
-    logger.info("Mapping pixels to 8μm bins (fully vectorized)...")
+    # Strategy: Direct pixel → 8μm bin mapping using scaling factor
+    # Scaling: 8μm / 0.2739 μm/pixel ≈ 29.2 pixels per 8μm bin
 
-    # Extract pixel coordinates as numpy arrays
-    pixel_rows = df['y'].values.astype(np.int32)
-    pixel_cols = df['x'].values.astype(np.int32)
+    logger.info("Mapping pixels DIRECTLY to 8μm bins using scaling factor...")
 
-    # For each pixel, find nearest 8μm bin center
-    # Each 8μm bin covers a 4x4 region, so we divide by 4 and round to find the bin
-    # Then find which bin center is closest
+    # Scaling factor from metadata
+    MICRONS_PER_PIXEL = 0.2739038899725172
+    BIN_SIZE_MICRONS = 8.0
+    PIXELS_PER_8UM_BIN = BIN_SIZE_MICRONS / MICRONS_PER_PIXEL  # ≈ 29.206
 
-    # Convert pixel coordinates to bin indices (divide by 4 since 8μm = 4 * 2μm)
-    pixel_bin_rows = (pixel_rows / 4).astype(np.int32)
-    pixel_bin_cols = (pixel_cols / 4).astype(np.int32)
+    logger.info(f"  Scaling: {PIXELS_PER_8UM_BIN:.3f} pixels per 8μm bin")
 
-    # Also compute bin centers for comparison
-    bin_center_rows = (bin_centers[:, 0] / 4).astype(np.int32)
-    bin_center_cols = (bin_centers[:, 1] / 4).astype(np.int32)
+    # Crop offsets
+    CROP_OFFSET_Y = 12519  # row_left
+    CROP_OFFSET_X = 3157   # col_up
 
-    # Create a dictionary for fast lookup: (bin_row, bin_col) -> barcode
-    logger.info("  Building bin coordinate lookup table...")
-    bin_coord_to_barcode = {}
-    for i in range(len(barcodes)):
-        key = (bin_center_rows[i], bin_center_cols[i])
-        bin_coord_to_barcode[key] = barcodes[i]
+    logger.info(f"  Applying crop offset: y+{CROP_OFFSET_Y}, x+{CROP_OFFSET_X}")
 
-    logger.info(f"  Lookup table size: {len(bin_coord_to_barcode):,} unique bin coordinates")
+    # Extract pixel coordinates and convert to full-resolution
+    pixel_rows = df['y'].values.astype(np.int32) + CROP_OFFSET_Y
+    pixel_cols = df['x'].values.astype(np.int32) + CROP_OFFSET_X
 
-    # Vectorized lookup using numpy
-    logger.info("  Performing vectorized bin assignment...")
-    bin_8um_list = []
-    batch_size = 10_000_000  # Process 10M pixels at a time
+    # Compute 8μm bin indices: divide by scaling factor and round down with int()
+    bin_8um_row_idx = (pixel_rows / PIXELS_PER_8UM_BIN).astype(np.int32)
+    bin_8um_col_idx = (pixel_cols / PIXELS_PER_8UM_BIN).astype(np.int32)
 
-    for i in range(0, len(pixel_bin_rows), batch_size):
-        end_idx = min(i + batch_size, len(pixel_bin_rows))
-        batch_rows = pixel_bin_rows[i:end_idx]
-        batch_cols = pixel_bin_cols[i:end_idx]
+    logger.info(f"  Computed 8μm bin indices for {len(df):,} pixels")
 
-        # Look up barcodes for this batch
-        batch_barcodes = [
-            bin_coord_to_barcode.get((r, c), None)
-            for r, c in zip(batch_rows, batch_cols)
-        ]
-        bin_8um_list.extend(batch_barcodes)
+    # Vectorized mapping using pandas merge
+    logger.info("  Preparing 8μm bin lookup (vectorized)...")
+    bins_8um_df['row_idx'] = (bins_8um_df['pxl_row_in_fullres'] / PIXELS_PER_8UM_BIN).astype(np.int32)
+    bins_8um_df['col_idx'] = (bins_8um_df['pxl_col_in_fullres'] / PIXELS_PER_8UM_BIN).astype(np.int32)
 
-        if (i // batch_size) % 10 == 0:
-            logger.info(f"    Processed {end_idx:,} / {len(pixel_bin_rows):,} pixels...")
+    # Create a lookup dataframe with only necessary columns
+    bins_lookup = bins_8um_df[['row_idx', 'col_idx', 'barcode']].copy()
+    logger.info(f"  Created lookup for {len(bins_lookup):,} 8μm bins")
 
-    df['bin_8um'] = bin_8um_list
+    # Add bin indices to pixel dataframe
+    df['bin_row_idx'] = bin_8um_row_idx
+    df['bin_col_idx'] = bin_8um_col_idx
 
-    # Count how many pixels were mapped
-    mapped_pixels = df['bin_8um'].notna().sum()
-    logger.info(f"  Mapped {mapped_pixels:,} / {len(df):,} pixels to 8μm bins ({100*mapped_pixels/len(df):.1f}%)")
+    # Vectorized merge: map pixels to 8μm barcodes
+    logger.info("  Mapping pixels to 8μm barcodes (vectorized merge)...")
+    df = df.merge(
+        bins_lookup,
+        left_on=['bin_row_idx', 'bin_col_idx'],
+        right_on=['row_idx', 'col_idx'],
+        how='left'
+    )
+    df = df.rename(columns={'barcode': 'bin_8um'})
+    df = df.drop(columns=['row_idx', 'col_idx', 'bin_row_idx', 'bin_col_idx'])
+
+    # Count mapped pixels
+    mapped_8um = df['bin_8um'].notna().sum()
+    logger.info(f"  Mapped {mapped_8um:,} / {len(df):,} pixels to 8μm bins ({100*mapped_8um/len(df):.1f}%)")
 
     # Map bins to clusters (vectorized)
     logger.info("Mapping bins to clusters (vectorized)...")
@@ -170,16 +144,38 @@ def assign_cell_types(cellpose_csv_path, bin_centers, barcodes, cluster_assignme
     logger.info("Assigning cell types (vectorized)...")
     df['cell_type'] = df['cluster'].map(cluster_to_celltype)
 
-    # For pixels without cluster assignment, use majority vote within each cell
+    # For cells with multiple clusters, use majority vote (most pixels wins)
     logger.info("Assigning cell types by majority vote for each cell...")
 
-    # Group by cell_id and find majority cell_type
-    cell_type_votes = df[df['cell_type'].notna()].groupby('cell_id')['cell_type'].agg(
-        lambda x: x.value_counts().index[0] if len(x) > 0 else 'Unknown'
-    )
+    def get_majority_celltype(cell_types):
+        """Get cell type with most pixels. If tie or all Unknown, return 'Unknown'."""
+        if len(cell_types) == 0:
+            return 'Unknown'
+
+        # Count occurrences
+        counts = cell_types.value_counts()
+
+        # If only Unknown values, return Unknown
+        if len(counts) == 1 and counts.index[0] == 'Unknown':
+            return 'Unknown'
+
+        # Remove Unknown from counts for majority vote
+        counts_without_unknown = counts[counts.index != 'Unknown']
+
+        if len(counts_without_unknown) == 0:
+            return 'Unknown'
+
+        # Return cell type with most pixels
+        return counts_without_unknown.index[0]
+
+    # Group by cell_id and find majority cell_type (only for cells with pixels)
+    logger.info("  Counting pixel votes per cell...")
+    cell_type_votes = df[df['cell_id'] > 0].groupby('cell_id')['cell_type'].agg(get_majority_celltype)
 
     # Create cell_id -> cell_type mapping
     cell_to_celltype = cell_type_votes.to_dict()
+
+    logger.info(f"  Assigned cell types to {len(cell_to_celltype):,} cells")
 
     # Fill in cell_type for all pixels based on their cell_id (vectorized)
     df['cell_type_assigned'] = df['cell_id'].map(cell_to_celltype)
@@ -262,16 +258,13 @@ def main():
     logger.info("")
 
     # Step 1: Load 8μm bin positions and cluster mappings
-    tissue_df, cluster_to_celltype = load_8um_annotations(tissue_positions_8um, cluster_mapping_csv)
+    tissue_df_8um, cluster_to_celltype = load_8um_annotations(tissue_positions_8um, cluster_mapping_csv)
 
     # Step 2: Load cluster assignments from h5ad
     cluster_assignments = load_cluster_assignments_from_h5ad(h5ad_path)
 
-    # Step 3: Create pixel-to-bin mapping (2μm -> 8μm) - vectorized
-    bin_centers, barcodes = create_pixel_to_bin_mapping(tissue_df)
-
-    # Step 4: Load Cellpose CSV, assign cell types, and save - fully vectorized
-    df_annotated = assign_cell_types(cellpose_csv, bin_centers, barcodes, cluster_assignments, cluster_to_celltype, output_csv)
+    # Step 3: Load Cellpose CSV, map directly to 8μm bins using scaling factor, assign cell types, and save
+    df_annotated = assign_cell_types(cellpose_csv, tissue_df_8um, cluster_assignments, cluster_to_celltype, output_csv)
 
     # Summary
     logger.info("\n" + "="*70)
@@ -279,13 +272,13 @@ def main():
     logger.info("="*70)
     logger.info(f"\nOutput file: {output_csv}")
     logger.info(f"\nColumns in output CSV:")
-    logger.info(f"  - x, y: Pixel coordinates (2μm resolution)")
+    logger.info(f"  - x, y: Pixel coordinates in cropped image")
     logger.info(f"  - cell_id: Cell identifier from Cellpose")
     logger.info(f"  - is_boundary: 1 if pixel is cell boundary")
     logger.info(f"  - is_interior: 1 if pixel is cell interior")
     logger.info(f"  - is_nuclear: 1 if pixel is nucleus")
     logger.info(f"  - is_cytoplasm: 1 if pixel is cytoplasm")
-    logger.info(f"  - cell_type: Assigned cell type from 8μm cluster annotation")
+    logger.info(f"  - cell_type: Assigned cell type (mapped via scaling: pixel → 8μm bin → cluster → cell type)")
 
 
 if __name__ == "__main__":

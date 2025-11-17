@@ -3,10 +3,8 @@ input_HD/
 output_HD/
 kidney/
 brain/
-CSGO/
 Bin2Cell_Validation/
 cell-seg-go/
-csgo_segmentation_output/
 cellannotation_results/
 small_intenstine/
 cellpose/
@@ -18,7 +16,12 @@ Human_Colorectal/
 cellpose_sam_human_colorectal_output/
 cellannotation_results_human_colorectal/
 stardist_nuclear_output/
-
+kidney_sc_data/
+checkpoints/
+pseudo_visium_hd_output/
+pseudo_visium_hd_outpu_full/
+validation_results/
+gene_localization_results_kidney/
 
 # Large data files
 *.png

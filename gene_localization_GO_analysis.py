@@ -6,9 +6,9 @@ import requests
 from collections import defaultdict
 
 
-INPUT_H5AD = "cellannotation_results_small_intestine/visium_hd_annotated.h5ad"
-ORGANISM = "mouse"  # "mouse" or "human"
-OUTPUT_DIR = "gene_localization_results"
+INPUT_H5 = "kidney_sc_data/KIRC_GSE159115_expression.h5"
+ORGANISM = "human"  # "mouse" or "human"
+OUTPUT_DIR = "gene_localization_results_kidney"
 
 # Comprehensive GO terms for each compartment
 GO_TERMS = {
@@ -143,14 +143,16 @@ def save_results(results, output_dir):
 def main():
     """Run analysis pipeline."""
     print("=" * 60)
-    print("Gene Localization GO Analysis")
+    print("Gene Localization GO Analysis - Kidney SC Data")
     print("=" * 60)
 
-    # Load genes from h5ad
-    import scanpy as sc
-    print(f"\nLoading {INPUT_H5AD}...")
-    adata = sc.read_h5ad(INPUT_H5AD)
-    genes = adata.var_names.tolist()
+    # Load genes from h5 file (10X format)
+    import h5py
+    print(f"\nLoading {INPUT_H5}...")
+    with h5py.File(INPUT_H5, 'r') as f:
+        # Extract gene names from features/name
+        gene_names = f['matrix']['features']['name'][:]
+        genes = [g.decode('utf-8') if isinstance(g, bytes) else g for g in gene_names]
     print(f"Loaded {len(genes)} genes\n")
 
     # Pipeline
