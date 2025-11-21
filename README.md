@@ -239,10 +239,7 @@ Endothelial cells,0.25,0.35
 **Workflow:**
 
 1. **Find matching single-cell dataset:** Identify a single-cell RNA-seq dataset from the same tissue type with matching cell type composition
-2. **Gene localization analysis:** Perform GO (Gene Ontology) analysis to determine which genes are expressed in:
-   - Nucleus
-   - Cytoplasm
-   - Cell membrane
+2. **Gene localization analysis:** Classify genes by subcellular compartment using multi-source annotation
 3. **Spatial assignment:** Assign single-cell profiles to segmented cells based on:
    - Cell type matching
    - Spatial location in tissue
@@ -251,13 +248,44 @@ Endothelial cells,0.25,0.35
 
 **Implementation:**
 
-- Script: `gene_localization_GO_analysis.py` - Classify genes by subcellular localization (nucleus, cytoplasm, cell membrane) using GO term analysis
+- Script: `gene_localization_GO_analysis.py` - Classify genes by subcellular localization using GENCODE, RNALocate, and UniProt annotations
 
-**Output:**
+#### Gene Localization Classification Logic
 
-- Cell-level ground truth with known gene expression profiles
-- Spatial coordinates of each cell
-- Subcellular gene localization information
+The script classifies genes into three mutually exclusive subcellular compartments using multiple annotation databases:
+
+**Data Sources:**
+
+1. **GENCODE/Ensembl GTF** - Gene biotype annotations (lncRNA, protein_coding, snRNA, etc.)
+2. **RNALocate** - Experimental RNA subcellular localization database (~1.26M entries)
+3. **UniProt** - Protein subcellular location annotations via REST API
+
+**Classification Rules:**
+
+**Nuclear Genes:**
+- **Criteria:** Non-coding genes AND RNALocate nuclear localization (BOTH required)
+  - **Non-coding biotypes:** lncRNA, antisense, processed_transcript, snRNA, snoRNA, scaRNA, misc_RNA, sense_intronic, sense_overlapping, bidirectional_promoter_lncRNA
+  - **AND** RNALocate location contains: "nucleus", "nucleoplasm", "nuclear speckle", "nucleolus", or "chromatin"
+- **Manual additions:** MALAT1, NEAT1, XIST, SNHG*, SNORD*, SNORA*, RNU* (well-known nuclear RNAs)
+- **Expected:** ~1,000-1,500 genes (~4-6% of total genes)
+
+**Membrane Genes:**
+- **Criteria:** Protein-coding genes AND UniProt membrane keywords (BOTH required)
+  - **Biotype:** protein_coding
+  - **AND** UniProt annotation contains: "Secreted", "Signal peptide", "Transmembrane", "GPI-anchor", "Cell membrane", "Extracellular", "Endoplasmic reticulum", or "Golgi apparatus"
+- **Expected:** ~7,000-9,000 genes (~30-40% of total genes)
+
+**Cytoplasm Genes:**
+- **Criteria:** All remaining genes (Total genes - Nuclear genes - Membrane genes)
+- **Expected:** ~13,000-15,000 genes (~55-65% of total genes)
+- **Note:** Most protein-coding genes that are not membrane-associated fall into this category
+
+
+**Output Files:**
+
+- `gene_localization_results/genes_nucleus.txt` - Nuclear-enriched genes
+- `gene_localization_results/genes_cell_membrane.txt` - Membrane/secretory genes
+- `gene_localization_results/genes_cytoplasm.txt` - Cytoplasmic genes
 
 
 ## Pseudo Visium HD Data Generation

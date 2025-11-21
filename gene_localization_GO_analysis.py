@@ -1,129 +1,320 @@
 #!/usr/bin/env python3
-"""Gene Localization GO Analysis - Classify genes into nucleus, cytoplasm, or cell membrane."""
+"""Gene Localization Analysis - Classify genes using GENCODE, RNALocate, and UniProt."""
 
 import os
 import requests
+import gzip
 from collections import defaultdict
+import re
 
 
 INPUT_H5 = "kidney_sc_data/KIRC_GSE159115_expression.h5"
 ORGANISM = "human"  # "mouse" or "human"
 OUTPUT_DIR = "gene_localization_results_kidney"
 
-# Comprehensive GO terms for each compartment
-GO_TERMS = {
-    "nucleus": [
-        "GO:0005634", "GO:0005654", "GO:0005694", "GO:0031981", "GO:0005730",
-        "GO:0005635", "GO:0005643", "GO:0000785", "GO:0005657", "GO:0016607",
-        "GO:0031965", "GO:0005719", "GO:0005721", "GO:0000790", "GO:0000228",
-        "GO:0005739", "GO:0044613", "GO:0031981", "GO:0005654", "GO:0016604"
-    ],
-    "cytoplasm": [
-        "GO:0005737", "GO:0005829", "GO:0043232", "GO:0005856", "GO:0005739",
-        "GO:0005783", "GO:0005794", "GO:0005764", "GO:0005777", "GO:0005773",
-        "GO:0005768", "GO:0005769", "GO:0031410", "GO:0005793", "GO:0005789",
-        "GO:0005743", "GO:0005759", "GO:0005758", "GO:0030529", "GO:0022626",
-        "GO:0005874", "GO:0005875", "GO:0005813", "GO:0005815", "GO:0031901"
-    ],
-    "cell_membrane": [
-        "GO:0005886", "GO:0005887", "GO:0009986", "GO:0031226", "GO:0045121",
-        "GO:0016020", "GO:0031224", "GO:0098590", "GO:0098589", "GO:0030054",
-        "GO:0042995", "GO:0043197", "GO:0044853", "GO:0098552", "GO:0030659",
-        "GO:0016021", "GO:0031225", "GO:0005902", "GO:0070161", "GO:0031982"
-    ]
+# URLs for annotation files
+GENCODE_URLS = {
+    "human": "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_46/gencode.v46.annotation.gtf.gz",
+    "mouse": "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz"
 }
 
-def api_request(url, data, timeout=60):
-    """Make API request with error handling."""
+# RNALocate download URLs (experimental data files)
+RNALOCATE_URLS = {
+    "lncRNA": "http://www.rnalocate.org/static/download/RNALocate_lncRNA_experiment.txt",
+    "all": "http://www.rnalocate.org/static/download/RNALocate_all_experiment.txt"
+}
+
+# Nuclear non-coding RNA biotypes
+NONCODING_BIOTYPES = {
+    "lncRNA", "antisense", "processed_transcript", "snRNA", "snoRNA",
+    "scaRNA", "misc_RNA", "sense_intronic", "sense_overlapping",
+    "bidirectional_promoter_lncRNA", "lincRNA", "3prime_overlapping_ncRNA",
+    "antisense_RNA", "macro_lncRNA", "non_coding", "retained_intron"
+}
+
+# Nuclear RNA localization keywords for RNALocate
+NUCLEAR_LOCATIONS = {
+    "nucleus", "nucleoplasm", "nuclear speckle", "nucleolus", "chromatin",
+    "nuclear_speckle", "nuclear_body", "nuclear_membrane", "nuclear pore"
+}
+
+# Manually curated nuclear RNAs
+MANUAL_NUCLEAR_GENES = {
+    "MALAT1", "NEAT1", "XIST"
+}
+
+# Membrane-related UniProt keywords
+MEMBRANE_KEYWORDS = {
+    "Secreted", "Signal peptide", "Transmembrane", "GPI-anchor",
+    "Cell membrane", "Endoplasmic reticulum",
+    "Membrane"
+}
+
+
+def download_file(url, cache_file):
+    """Download file with caching."""
+    if os.path.exists(cache_file):
+        print(f"Using cached {cache_file}")
+        return cache_file
+
+    print(f"Downloading {url}...")
     try:
-        response = requests.post(url, data=data, timeout=timeout)
-        return response if response.status_code == 200 else None
-    except:
+        response = requests.get(url, stream=True, timeout=300)
+        response.raise_for_status()
+        with open(cache_file, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(f"Saved to {cache_file}")
+        return cache_file
+    except Exception as e:
+        print(f"Error downloading: {e}")
         return None
 
 
-def get_ensembl_ids(genes, organism):
-    """Convert gene symbols to Ensembl IDs."""
-    print(f"Converting {len(genes)} genes to Ensembl IDs...")
-    gene_map = {}
-    species = "mouse" if organism.lower() == "mouse" else "human"
+def parse_gencode_gtf(gtf_file, genes_of_interest):
+    """Parse GENCODE GTF to get gene biotypes."""
+    print(f"\nParsing GENCODE GTF for {len(genes_of_interest)} genes...")
+    gene_biotypes = {}
+    genes_set = set(genes_of_interest)
 
-    for i in range(0, len(genes), 1000):
-        batch = genes[i:i+1000]
-        response = api_request(
-            "http://mygene.info/v3/query",
-            {"q": ",".join(batch), "scopes": "symbol,alias",
-             "fields": "ensembl.gene", "species": species, "size": 1}
-        )
-        if response:
-            for result in response.json():
-                if "ensembl" in result and not result.get("notfound"):
-                    symbol = result.get("query", "")
-                    ensembl = result["ensembl"]
-                    gene_id = ensembl[0]["gene"] if isinstance(ensembl, list) else ensembl.get("gene")
-                    if gene_id:
-                        gene_map[symbol] = gene_id
-        print(f"  {min(i+1000, len(genes))}/{len(genes)}")
+    open_func = gzip.open if gtf_file.endswith('.gz') else open
 
-    print(f"Mapped {len(gene_map)}/{len(genes)} genes")
-    return gene_map
+    with open_func(gtf_file, 'rt') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
 
+            parts = line.strip().split('\t')
+            if len(parts) < 9 or parts[2] != 'gene':
+                continue
 
-def get_go_annotations(ensembl_ids, organism):
-    """Get GO annotations for Ensembl IDs."""
-    print(f"Querying GO annotations for {len(ensembl_ids)} genes...")
-    dataset = "mmusculus_gene_ensembl" if organism.lower() == "mouse" else "hsapiens_gene_ensembl"
-    gene_go = defaultdict(list)
+            # Parse attributes
+            attrs = {}
+            for attr in parts[8].split(';'):
+                attr = attr.strip()
+                if not attr:
+                    continue
+                match = re.match(r'(\S+)\s+"([^"]+)"', attr)
+                if match:
+                    attrs[match.group(1)] = match.group(2)
 
-    for i in range(0, len(ensembl_ids), 500):
-        batch = ensembl_ids[i:i+500]
-        xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE Query>
-<Query virtualSchemaName="default" formatter="TSV" header="0" uniqueRows="0">
-    <Dataset name="{dataset}" interface="default">
-        <Filter name="ensembl_gene_id" value="{','.join(batch)}"/>
-        <Attribute name="ensembl_gene_id"/>
-        <Attribute name="go_id"/>
-    </Dataset>
-</Query>'''
+            gene_name = attrs.get('gene_name')
+            gene_type = attrs.get('gene_type') or attrs.get('gene_biotype')
 
-        response = api_request("http://www.ensembl.org/biomart/martservice", {"query": xml})
-        if response:
-            for line in response.text.strip().split("\n"):
-                parts = line.split("\t")
-                if len(parts) >= 2 and parts[1].startswith("GO:"):
-                    gene_go[parts[0]].append(parts[1])
-        print(f"  {min(i+500, len(ensembl_ids))}/{len(ensembl_ids)}")
+            if gene_name in genes_set and gene_type:
+                gene_biotypes[gene_name] = gene_type
 
-    print(f"Retrieved GO for {len(gene_go)}/{len(ensembl_ids)} genes")
-    return dict(gene_go)
+    print(f"Found biotypes for {len(gene_biotypes)} genes")
+    return gene_biotypes
 
 
-def classify_genes(genes, gene_to_ensembl, gene_to_go, go_terms):
-    """Classify genes by cellular location."""
-    print("\nClassifying genes...")
-    results = {k: [] for k in go_terms.keys()}
-    classified = set()
+def parse_rnalocate_file(rnalocate_file, genes, organism):
+    """
+    Parse RNALocate experimental data file for nuclear localization.
 
-    # First pass: classify genes with GO annotations
+    File format: RNALocate ID, Species, RNA Symbol, RNA Type, Subcellular Localization, GO Accession, PubMed ID, Score
+
+    Args:
+        rnalocate_file: Path to downloaded RNALocate experimental data file
+        genes: List of gene symbols to check
+        organism: "human" or "mouse"
+
+    Returns:
+        Set of genes with nuclear localization
+    """
+    print(f"\nParsing RNALocate file for nuclear genes...")
+
+    nuclear_genes = set()
+    genes_set = set(genes)
+
+    # Species names in RNALocate
+    species_name = "Homo sapiens" if organism.lower() == "human" else "Mus musculus"
+
+    line_count = 0
+    matched_count = 0
+
+    with open(rnalocate_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            line_count += 1
+
+            # Skip header if present
+            if line.startswith("RNALocate ID") or line.startswith("#"):
+                continue
+
+            parts = line.strip().split('\t')
+            if len(parts) < 5:
+                continue
+
+            # Extract fields
+            # Format: RNALocate ID, Species, RNA Symbol, RNA Type, Subcellular Localization, ...
+            rna_species = parts[1].strip()
+            rna_symbol = parts[2].strip()
+            subcell_loc = parts[4].strip().lower()
+
+            # Check if correct species
+            if rna_species != species_name:
+                continue
+
+            # Check if gene is in our dataset
+            if rna_symbol not in genes_set:
+                continue
+
+            # Check if subcellular location contains nuclear keywords
+            if any(keyword in subcell_loc for keyword in NUCLEAR_LOCATIONS):
+                nuclear_genes.add(rna_symbol)
+                matched_count += 1
+
+    print(f"  Processed {line_count} lines from RNALocate")
+    print(f"  Found {len(nuclear_genes)} unique genes with nuclear localization")
+    print(f"  Total entries matched: {matched_count}")
+
+    return nuclear_genes
+
+
+def get_uniprot_annotations(genes, organism):
+    """Get UniProt subcellular location annotations via direct UniProt REST API."""
+    print(f"\nQuerying UniProt REST API for {len(genes)} genes...")
+    gene_membrane = set()
+
+    organism_code = "9606" if organism.lower() == "human" else "10090"
+
+    # Query UniProt directly - batch by batch
+    batch_size = 100  # Smaller batches for UniProt API
+    for i in range(0, len(genes), batch_size):
+        batch = genes[i:i+batch_size]
+
+        # Build query: gene1 OR gene2 OR gene3...
+        gene_query = " OR ".join([f"gene:{g}" for g in batch])
+
+        url = "https://rest.uniprot.org/uniprotkb/search"
+        params = {
+            "query": f"({gene_query}) AND organism_id:{organism_code}",
+            "fields": "gene_names,cc_subcellular_location,ft_transmem,ft_signal,ft_topo_dom",
+            "format": "tsv",
+            "size": 500  # Max results per batch
+        }
+
+        try:
+            response = requests.get(url, params=params, timeout=60)
+
+            if response.status_code == 200:
+                lines = response.text.strip().split('\n')
+
+                # Skip header
+                for line in lines[1:]:
+                    parts = line.split('\t')
+                    if len(parts) < 2:
+                        continue
+
+                    # Extract primary gene name from "Gene Names" field
+                    gene_names_field = parts[0]
+                    if not gene_names_field:
+                        continue
+
+                    # Primary gene name is usually the first one
+                    primary_gene = gene_names_field.split()[0]
+
+                    # Combine all annotation fields
+                    annotation_text = ' '.join(parts[1:]).lower()
+
+                    # Check for membrane/secretory keywords
+                    if any(keyword.lower() in annotation_text for keyword in MEMBRANE_KEYWORDS):
+                        gene_membrane.add(primary_gene)
+
+            elif response.status_code != 200:
+                print(f"  Warning: batch {i//batch_size + 1} returned status {response.status_code}")
+
+        except Exception as e:
+            print(f"  Error in batch {i//batch_size + 1}: {e}")
+
+        print(f"  Processed {min(i+batch_size, len(genes))}/{len(genes)}")
+
+    print(f"Found {len(gene_membrane)} membrane-associated genes from UniProt")
+    return gene_membrane
+
+
+def classify_genes_new_logic(genes, gene_biotypes, rnalocate_nuclear_genes, membrane_genes):
+    """
+    Classify genes using the new logic:
+    1. Nuclear: non-coding RNAs (lncRNA, snRNA, snoRNA) + manual curation + RNALocate validated
+    2. Membrane: protein-coding genes with membrane/secretory UniProt annotations (BOTH required!)
+    3. Cytoplasm: everything else
+    """
+    print("\nClassifying genes with new logic...")
+
+    nuclear_genes = set()
+    final_membrane_genes = set()
+
+    # Debug counters
+    manual_count = 0
+    pattern_count = 0
+    biotype_rnalocate_count = 0
+    membrane_coding_count = 0
+    membrane_filtered_count = 0
+
+    # 1. Identify nuclear genes
     for gene in genes:
-        ensembl = gene_to_ensembl.get(gene)
-        if not ensembl or ensembl not in gene_to_go:
+        # Manual curation
+        if gene in MANUAL_NUCLEAR_GENES:
+            nuclear_genes.add(gene)
+            manual_count += 1
             continue
 
-        go_set = set(gene_to_go[ensembl])
-        for compartment, go_list in go_terms.items():
-            if any(go in go_set for go in go_list):
-                results[compartment].append(gene)
-                classified.add(gene)
+        # Pattern matching for manually curated families
+        if (gene.startswith("SNHG") or gene.startswith("SNORD") or
+            gene.startswith("SNORA") or gene.startswith("RNU")):
+            nuclear_genes.add(gene)
+            pattern_count += 1
+            continue
 
-    # Second pass: assign all unclassified genes to cytoplasm (default)
-    unclassified = [g for g in genes if g not in classified]
-    results["cytoplasm"].extend(unclassified)
+        # Check if non-coding RNA with nuclear localization (BOTH required!)
+        biotype = gene_biotypes.get(gene, "")
+        if biotype in NONCODING_BIOTYPES:
+            # Must ALSO be in RNALocate nuclear list
+            if gene in rnalocate_nuclear_genes:
+                nuclear_genes.add(gene)
+                biotype_rnalocate_count += 1
 
-    print(f"  nucleus: {len(results['nucleus'])} genes")
-    print(f"  cytoplasm: {len(results['cytoplasm'])} genes ({len(unclassified)} assigned by default)")
-    print(f"  cell_membrane: {len(results['cell_membrane'])} genes")
+    # 2. Filter membrane genes to only protein-coding genes (BOTH required!)
+    for gene in membrane_genes:
+        if gene in genes:  # Gene is in our dataset
+            biotype = gene_biotypes.get(gene, "")
+            if biotype == "protein_coding":
+                final_membrane_genes.add(gene)
+                membrane_coding_count += 1
+            else:
+                membrane_filtered_count += 1
+
+    # 3. Cytoplasmic genes = all - nuclear - membrane
+    cyto_genes = set(genes) - nuclear_genes - final_membrane_genes
+
+    results = {
+        "nucleus": sorted(nuclear_genes),
+        "cell_membrane": sorted(final_membrane_genes),
+        "cytoplasm": sorted(cyto_genes)
+    }
+
+    print(f"\nNuclear gene breakdown:")
+    print(f"  Manual curation: {manual_count}")
+    print(f"  Pattern matching (SNHG*, SNORD*, etc.): {pattern_count}")
+    print(f"  Non-coding + RNALocate validated: {biotype_rnalocate_count}")
+    print(f"  Total nucleus: {len(results['nucleus'])} genes")
+
+    print(f"\nMembrane gene breakdown:")
+    print(f"  UniProt membrane keywords + protein-coding: {membrane_coding_count}")
+    print(f"  Filtered out (non-coding): {membrane_filtered_count}")
+    print(f"  Total cell_membrane: {len(results['cell_membrane'])} genes")
+
+    print(f"\n  cytoplasm: {len(results['cytoplasm'])} genes")
+
+    # Show some examples
+    if len(results['nucleus']) > 0:
+        print(f"\nExample nuclear genes: {', '.join(list(results['nucleus'])[:10])}")
+    if len(results['cell_membrane']) > 0:
+        print(f"Example membrane genes: {', '.join(list(results['cell_membrane'])[:10])}")
+
+    # Verify no overlaps
+    assert len(nuclear_genes & final_membrane_genes & cyto_genes) == 0, "Overlapping classifications!"
 
     return results
 
@@ -136,30 +327,67 @@ def save_results(results, output_dir):
     for compartment, genes in results.items():
         filename = f"{output_dir}/genes_{compartment}.txt"
         with open(filename, 'w') as f:
-            f.write("\n".join(sorted(genes)))
+            f.write("\n".join(genes))
         print(f"  {compartment}: {len(genes)} genes")
 
 
 def main():
     """Run analysis pipeline."""
     print("=" * 60)
-    print("Gene Localization GO Analysis - Kidney SC Data")
+    print("Gene Localization Analysis - New Logic")
+    print("Using GENCODE, RNALocate, and UniProt")
     print("=" * 60)
 
-    # Load genes from h5 file (10X format)
+    # Load genes from h5 file
     import h5py
     print(f"\nLoading {INPUT_H5}...")
     with h5py.File(INPUT_H5, 'r') as f:
-        # Extract gene names from features/name
         gene_names = f['matrix']['features']['name'][:]
         genes = [g.decode('utf-8') if isinstance(g, bytes) else g for g in gene_names]
-    print(f"Loaded {len(genes)} genes\n")
+    print(f"Loaded {len(genes)} genes")
 
-    # Pipeline
-    gene_to_ensembl = get_ensembl_ids(genes, ORGANISM)
-    ensembl_ids = list(set(gene_to_ensembl.values()))
-    gene_to_go = get_go_annotations(ensembl_ids, ORGANISM)
-    results = classify_genes(genes, gene_to_ensembl, gene_to_go, GO_TERMS)
+    # Download and cache annotation files
+    cache_dir = "annotation_cache"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # 1. GENCODE GTF
+    gencode_file = f"{cache_dir}/gencode_{ORGANISM}.gtf.gz"
+    if not os.path.exists(gencode_file):
+        download_file(GENCODE_URLS[ORGANISM], gencode_file)
+    gene_biotypes = parse_gencode_gtf(gencode_file, genes)
+
+    # Show biotype statistics
+    print(f"\nGENCODE biotype statistics:")
+    from collections import Counter
+    biotype_counts = Counter(gene_biotypes.values())
+    for biotype, count in biotype_counts.most_common(10):
+        marker = " (NUCLEAR)" if biotype in NONCODING_BIOTYPES else ""
+        print(f"  {biotype}: {count}{marker}")
+
+    # 2. RNALocate (download and parse experimental data for nuclear genes from non-coding RNAs)
+    # Only check genes that are non-coding RNAs
+    ncrna_genes = [g for g in genes if gene_biotypes.get(g, "") in NONCODING_BIOTYPES]
+    print(f"\nFound {len(ncrna_genes)} non-coding RNA genes to check against RNALocate")
+
+    if len(ncrna_genes) > 0:
+        # Download RNALocate experimental data file
+        rnalocate_file = f"{cache_dir}/rnalocate_all_experiment.txt"
+        if not os.path.exists(rnalocate_file):
+            download_file(RNALOCATE_URLS["all"], rnalocate_file)
+
+        # Parse for nuclear genes
+        rnalocate_nuclear_genes = parse_rnalocate_file(rnalocate_file, ncrna_genes, ORGANISM)
+    else:
+        print("  Skipping RNALocate (no non-coding RNAs found)")
+        rnalocate_nuclear_genes = set()
+
+    # 3. UniProt
+    membrane_genes = get_uniprot_annotations(genes, ORGANISM)
+
+    # Classify genes
+    results = classify_genes_new_logic(genes, gene_biotypes, rnalocate_nuclear_genes, membrane_genes)
+
+    # Save results
     save_results(results, OUTPUT_DIR)
 
     print("\n" + "=" * 60)

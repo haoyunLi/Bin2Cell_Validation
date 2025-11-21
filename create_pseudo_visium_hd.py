@@ -699,6 +699,16 @@ def distribute_genes_to_bins(df_pixels, adata_sc, gene_localization, cell_to_sc_
 
             # Write directly to pre-allocated numpy arrays (no reallocation!)
             n_entries = len(bin_x_vals)
+
+            # Check if we need to expand arrays (handles case when estimate is too low)
+            if current_idx + n_entries > len(bin_x_indices):
+                expansion_size = max(n_entries, len(bin_x_indices) // 10)  # Expand by at least 10% or n_entries
+                logger.info(f"  Expanding arrays: current size {len(bin_x_indices):,}, need {current_idx + n_entries:,}, adding {expansion_size:,}")
+                bin_x_indices = np.concatenate([bin_x_indices, np.empty(expansion_size, dtype=np.int32)])
+                bin_y_indices = np.concatenate([bin_y_indices, np.empty(expansion_size, dtype=np.int32)])
+                gene_indices = np.concatenate([gene_indices, np.empty(expansion_size, dtype=np.int32)])
+                counts = np.concatenate([counts, np.empty(expansion_size, dtype=np.float32)])
+
             bin_x_indices[current_idx:current_idx+n_entries] = bin_x_vals.astype(np.int32)
             bin_y_indices[current_idx:current_idx+n_entries] = bin_y_vals.astype(np.int32)
             gene_indices[current_idx:current_idx+n_entries] = gene_idx_vals

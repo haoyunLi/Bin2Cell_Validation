@@ -22,6 +22,7 @@ pseudo_visium_hd_output/
 pseudo_visium_hd_outpu_full/
 validation_results/
 gene_localization_results_kidney/
+annotation_cache/
 
 # Large data files
 *.png
