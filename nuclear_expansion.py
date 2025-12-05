@@ -14,7 +14,7 @@ This script:
 The expansion is fully vectorized for performance on 600M+ pixels.
 
 Usage:
-    python nuclear_expansion.py
+    python nuclear_expansion.py --input_csv <input> --output_csv <output> --nuclear_range_csv <ranges>
 """
 
 import numpy as np
@@ -30,6 +30,7 @@ from scipy.ndimage import distance_transform_edt, binary_dilation, generate_bina
 from scipy.sparse import coo_matrix
 from skimage.morphology import disk, ellipse
 import gzip
+import argparse
 
 # Disable PIL decompression bomb protection
 Image.MAX_IMAGE_PIXELS = None
@@ -492,22 +493,35 @@ def create_full_resolution_overlay(expanded_cell_mask, nuclear_mask, output_path
 def main():
     """Main pipeline for nuclear expansion."""
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Expand cell boundaries based on cell type-specific N:C ratios')
+    parser.add_argument('--input_csv', type=str,
+                       default='cellpose_sam_human_colorectal_output/cropped_visium_hd_human_colorectal_pixel_to_cell_mapping_with_celltype.csv.gz',
+                       help='Path to input pixel-to-cell mapping CSV (gzipped)')
+    parser.add_argument('--output_csv', type=str,
+                       default='cellpose_sam_human_colorectal_output/cropped_visium_hd_human_colorectal_pixel_to_cell_mapping_expanded.csv.gz',
+                       help='Path to output expanded pixel mapping CSV (gzipped)')
+    parser.add_argument('--output_vis', type=str,
+                       default='cellpose_sam_human_colorectal_output/cropped_visium_hd_human_colorectal_cell_nuclear_expanded_overlay.png',
+                       help='Path to output visualization image')
+    parser.add_argument('--nuclear_range_csv', type=str,
+                       default='cell_based_nuclear_range.csv',
+                       help='Path to cell type nuclear range CSV')
+    parser.add_argument('--original_image', type=str,
+                       default='cropped_visium_hd_human_colorectal.png',
+                       help='Path to original H&E image (optional, for visualization)')
+    args = parser.parse_args()
+
+    # Set paths from arguments
+    input_csv = Path(args.input_csv)
+    output_csv = Path(args.output_csv)
+    output_vis = Path(args.output_vis)
+    nuclear_range_csv = Path(args.nuclear_range_csv)
+    original_image = Path(args.original_image)
+
     logger.info("="*70)
     logger.info("Nuclear Expansion to Full Cell Segmentation")
     logger.info("="*70)
-
-    # Define paths
-    current_dir = Path.cwd()
-
-    # Input files
-    cellpose_dir = current_dir / 'cellpose_sam_human_kidney_output'
-    input_csv = cellpose_dir / 'cropped_visium_hd_human_kidney_pixel_to_cell_mapping_with_celltype.csv.gz'
-    nuclear_range_csv = current_dir / 'cell_based_nuclear_range.csv'
-    original_image = cellpose_dir / 'cropped_visium_hd_human_kidney.png'
-
-    # Output files
-    output_csv = cellpose_dir / 'cropped_visium_hd_human_kidney_pixel_to_cell_mapping_expanded.csv.gz'
-    output_vis = cellpose_dir / 'cropped_visium_hd_human_kidney_cell_nuclear_expanded_overlay.png'
 
     logger.info(f"\nInput files:")
     logger.info(f"  Pixel mapping: {input_csv}")

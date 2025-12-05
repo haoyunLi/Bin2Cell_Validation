@@ -30,6 +30,9 @@ import gzip
 import gc  # For garbage collection
 from collections import defaultdict  # For faster dictionary aggregation
 
+# Load configuration globally so helper functions can access it
+import config_pseudo_hd as config
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -42,53 +45,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_gene_localization(localization_dir):
-    """
-    Load gene subcellular localization from GO analysis results.
-
-    Args:
-        localization_dir: Directory containing genes_nucleus.txt, genes_cytoplasm.txt, genes_cell_membrane.txt
-
-    Returns:
-        Dictionary mapping gene -> compartment ('nuclear', 'cytoplasm', 'membrane')
-    """
-    logger.info(f"Loading gene localization from {localization_dir}...")
-
-    gene_localization = {}
-    localization_dir = Path(localization_dir)
-
-    # Load nuclear genes
-    nuclear_file = localization_dir / 'genes_nucleus.txt'
-    if nuclear_file.exists():
-        with open(nuclear_file, 'r') as f:
-            for line in f:
-                gene = line.strip()
-                if gene:
-                    gene_localization[gene] = 'nuclear'
-        logger.info(f"  Loaded {len([g for g in gene_localization.values() if g == 'nuclear'])} nuclear genes")
-
-    # Load cytoplasm genes
-    cytoplasm_file = localization_dir / 'genes_cytoplasm.txt'
-    if cytoplasm_file.exists():
-        with open(cytoplasm_file, 'r') as f:
-            for line in f:
-                gene = line.strip()
-                if gene:
-                    gene_localization[gene] = 'cytoplasm'
-        logger.info(f"  Loaded {len([g for g in gene_localization.values() if g == 'cytoplasm'])} cytoplasm genes")
-
-    # Load membrane genes
-    membrane_file = localization_dir / 'genes_cell_membrane.txt'
-    if membrane_file.exists():
-        with open(membrane_file, 'r') as f:
-            for line in f:
-                gene = line.strip()
-                if gene:
-                    gene_localization[gene] = 'membrane'
-        logger.info(f"  Loaded {len([g for g in gene_localization.values() if g == 'membrane'])} membrane genes")
-
-    logger.info(f"  Total genes with localization: {len(gene_localization)}")
-    return gene_localization
+# Old file-based gene localization removed - now using splicing model only
 
 
 def load_single_cell_data(sc_h5_path, sc_metadata_path):
@@ -530,36 +487,53 @@ def assign_sc_to_cells(df_pixels, adata_sc):
     return cell_to_sc
 
 
-def distribute_genes_to_bins(df_pixels, adata_sc, gene_localization, cell_to_sc_mapping,
+def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
+                              dropout_probs, membrane_genes,
                               microns_per_pixel=0.2739038899725172):
     """
-    Distribute genes from single-cell data to 2μm bins (single-threaded, optimized with bin aggregation).
+    Distribute genes from single-cell data to 2μm bins using splicing-based per-cell localization.
 
     Args:
         df_pixels: Pixel-to-cell mapping (or bin-to-cell mapping if aggregated)
         adata_sc: Single-cell AnnData
-        gene_localization: Dict mapping gene -> compartment
         cell_to_sc_mapping: Dict mapping cell_id -> sc_cell_index
+        dropout_probs: Dict containing p0 and global_alpha from splicing model
+        membrane_genes: Set of membrane genes from UniProt
         microns_per_pixel: Resolution
 
     Returns:
         DataFrame with columns: bin_x, bin_y, gene, count
     """
-    logger.info("Distributing genes to 2μm bins (optimized single-threaded)...")
+    logger.info("Distributing genes to 2μm bins using PER-CELL splicing model...")
 
     # Get list of genes in sc data
     sc_genes = np.array(adata_sc.var_names.tolist())
     logger.info(f"  Single-cell data has {len(sc_genes)} genes")
 
-    # Create gene localization masks
-    gene_to_compartment = np.array([gene_localization.get(g, 'unknown') for g in sc_genes])
-    nuclear_mask = gene_to_compartment == 'nuclear'
-    cytoplasm_mask = gene_to_compartment == 'cytoplasm'
-    membrane_mask = gene_to_compartment == 'membrane'
+    logger.info(f"  Baseline probs (p0) available for {len(dropout_probs['p0'])} genes")
+    logger.info(f"  Global alpha: {dropout_probs['global_alpha']:.6f}")
+    logger.info(f"  Membrane genes: {len(membrane_genes)} genes")
 
-    logger.info(f"    Nuclear genes: {nuclear_mask.sum()}")
-    logger.info(f"    Cytoplasm genes: {cytoplasm_mask.sum()}")
-    logger.info(f"    Membrane genes: {membrane_mask.sum()}")
+    # Import the per-cell assignment function and parameters
+    from gene_localization_GO_analysis import (
+        assign_nuclear_genes_per_cell,
+        SIGMA_CELL_FACTOR,
+        C_CAPTURE_EFFICIENCY,
+        CLIP_EPS
+    )
+
+    # Extract p0 and global_alpha
+    p0 = dropout_probs['p0']
+    global_alpha = dropout_probs['global_alpha']
+
+    # OPTIMIZATION: Pre-compute p0 array aligned with sc_genes (10x faster than dict lookups!)
+    logger.info(f"  Pre-computing p0 array for {len(sc_genes)} genes...")
+    p0_array = np.array([p0.get(g, 0.0) for g in sc_genes])
+    logger.info(f"    p0 array: {(p0_array > 0).sum()} genes with non-zero baseline probability")
+
+    # Pre-compute membrane gene mask (for fast vectorized operations)
+    membrane_gene_mask = np.array([g in membrane_genes for g in sc_genes])
+    logger.info(f"    Membrane mask: {membrane_gene_mask.sum()} membrane genes")
 
     # Check if data is already in bin format (optimized path) or pixel format (old path)
     use_bins = 'bin_x' in df_pixels.columns and 'bin_y' in df_pixels.columns
@@ -579,6 +553,15 @@ def distribute_genes_to_bins(df_pixels, adata_sc, gene_localization, cell_to_sc_
 
     unique_cells = list(cells_grouped.keys())
     logger.info(f"  Processing {len(unique_cells)} cells...")
+
+    # Draw cell-specific factors b_i ~ LogNormal(0, σ²) for ALL cells at once
+    # With mean=0, sigma=0.2: E[b_i] = exp(0 + σ²/2) = exp(0.02) ≈ 1.0202
+    np.random.seed(config.RANDOM_SEED)
+    num_cells = len(unique_cells)
+    mean_log = 0.0  # Mean of underlying normal distribution
+    cell_factors = np.random.lognormal(mean=mean_log, sigma=SIGMA_CELL_FACTOR, size=num_cells)
+    cell_id_to_factor = {cell_id: cell_factors[i] for i, cell_id in enumerate(unique_cells)}
+    logger.info(f"    Cell factors: mean={cell_factors.mean():.4f}, std={cell_factors.std():.4f}, range=[{cell_factors.min():.4f}, {cell_factors.max():.4f}]")
 
     # Extract expression matrix once (for sharing across processes)
     sc_gene_expr_matrix = adata_sc.X.toarray()
@@ -610,9 +593,9 @@ def distribute_genes_to_bins(df_pixels, adata_sc, gene_localization, cell_to_sc_
 
     # Pre-allocate numpy arrays instead of Python lists (MUCH faster!)
     # Python lists have reallocation overhead - numpy arrays are pre-allocated
-    # Estimate: 127K cells × 50K entries/cell = 6.35B entries
-    estimated_entries = len(unique_cells) * 50000
-    logger.info(f"  Pre-allocating numpy arrays for ~{estimated_entries:,} entries (~76 GB)...")
+    # Estimate: 127K cells × 60K entries/cell = 7.62B entries (with 20% safety margin to avoid expensive reallocation)
+    estimated_entries = len(unique_cells) * 60000
+    logger.info(f"  Pre-allocating numpy arrays for ~{estimated_entries:,} entries (~91 GB)...")
 
     # Store bin_x and bin_y separately to avoid 1D conversion issues
     bin_x_indices = np.empty(estimated_entries, dtype=np.int32)
@@ -645,11 +628,38 @@ def distribute_genes_to_bins(df_pixels, adata_sc, gene_localization, cell_to_sc_
         cytoplasm_kernel = compute_cytoplasm_kernel(df_cell, use_bins=use_bins)
         membrane_kernel = compute_membrane_kernel(df_cell, use_bins=use_bins)
 
+        # Determine gene compartments for THIS cell using splicing model
+        # Get cell-specific factor for this cell
+        cell_factor = cell_id_to_factor.get(cell_id, 1.0)
+
+        # PER-CELL assignment using VECTORIZED splicing model (10-50x faster!)
+        nuclear_genes_cell = assign_nuclear_genes_per_cell(
+            sc_gene_expr,
+            sc_genes,
+            p0,
+            cell_factor,
+            global_alpha,
+            C=C_CAPTURE_EFFICIENCY,
+            eps=CLIP_EPS,
+            p0_array=p0_array  # OPTIMIZATION: Use pre-computed array
+        )
+
+        # VECTORIZED membrane/cytosol assignment (10x faster than sets!)
+        # Create boolean masks directly without set operations
+        expressed_mask = sc_gene_expr > 0
+        nuclear_mask_cell = np.array([g in nuclear_genes_cell for g in sc_genes])
+
+        # Membrane: expressed AND in membrane_genes AND NOT nuclear
+        membrane_mask_cell = expressed_mask & membrane_gene_mask & ~nuclear_mask_cell
+
+        # Cytosol: expressed AND NOT nuclear AND NOT membrane
+        cytoplasm_mask_cell = expressed_mask & ~nuclear_mask_cell & ~membrane_mask_cell
+
         # Process all genes in each compartment
         for gene_mask, kernel in [
-            (nuclear_mask, nuclear_kernel),
-            (cytoplasm_mask, cytoplasm_kernel),
-            (membrane_mask, membrane_kernel)
+            (nuclear_mask_cell, nuclear_kernel),
+            (cytoplasm_mask_cell, cytoplasm_kernel),
+            (membrane_mask_cell, membrane_kernel)
         ]:
             if len(kernel) == 0 or gene_mask.sum() == 0:
                 continue
@@ -1129,12 +1139,11 @@ def main():
     logger.info("Create Pseudo Visium HD Data from Single-Cell Assignment")
     logger.info("="*70)
 
-    # Import configuration
-    import config_pseudo_hd as config
+    # Configuration is loaded globally from config_pseudo_hd.py
 
     logger.info(f"\nInput files:")
     logger.info(f"  Pixel mapping: {config.PIXEL_MAPPING_CSV}")
-    logger.info(f"  Gene localization: {config.GENE_LOCALIZATION_DIR}")
+    logger.info(f"  GTF annotation: {getattr(config, 'GTF_FILE', 'gencode.v38.annotation.gtf')}")
     logger.info(f"  Single-cell H5: {config.SC_H5_PATH}")
     logger.info(f"  Single-cell metadata: {config.SC_METADATA_PATH}")
     logger.info(f"\nOutput directory: {config.OUTPUT_DIR}")
@@ -1158,11 +1167,33 @@ def main():
     # Set random seed
     np.random.seed(config.RANDOM_SEED)
 
-    # Step 1: Load gene localization
-    gene_localization = load_gene_localization(config.GENE_LOCALIZATION_DIR)
-
-    # Step 2: Load single-cell data (H5 + TSV)
+    # Step 1 & 2: Load single-cell data FIRST (needed for gene counts in splicing model)
     adata_sc = load_single_cell_data(config.SC_H5_PATH, config.SC_METADATA_PATH)
+
+    # Compute gene counts for splicing model
+    logger.info("Computing gene counts for splicing model...")
+    gene_counts_array = np.array(adata_sc.X.sum(axis=0)).flatten()
+    gene_counts = {gene: int(count) for gene, count in zip(adata_sc.var_names, gene_counts_array)}
+
+    # Step 1: Compute gene localization using splicing model
+    logger.info("Computing gene localization using SPLICING-BASED MODEL...")
+
+    gtf_file = getattr(config, 'GTF_FILE', 'gencode.v38.annotation.gtf')
+    organism = getattr(config, 'ORGANISM', 'human')
+
+    # Import and call the classification function
+    from gene_localization_GO_analysis import classify_genes_aggregate, save_results
+
+    results = classify_genes_aggregate(
+        genes=list(adata_sc.var_names),
+        gtf_file=gtf_file,
+        gene_counts=gene_counts,
+        organism=organism
+    )
+
+    # Extract parameters for per-cell use
+    dropout_probs = results  # Contains p0, global_alpha, etc.
+    membrane_genes = results['membrane_genes_all']
 
     # Step 3: Load pixel-to-cell mapping (with bin aggregation optimization)
     df_pixels = load_pixel_to_cell_mapping(
@@ -1243,12 +1274,13 @@ def main():
     # Step 5: Save ground truth mapping (cell_id -> sc_cell)
     save_ground_truth_mapping(cell_to_sc_mapping, df_pixels, adata_sc, config.OUTPUT_DIR)
 
-    # Step 6: Distribute genes to bins (returns sparse data to avoid OOM)
+    # Step 6: Distribute genes to bins using splicing model
     sparse_data = distribute_genes_to_bins(
         df_pixels,
         adata_sc,
-        gene_localization,
         cell_to_sc_mapping,
+        dropout_probs,
+        membrane_genes,
         config.MICRONS_PER_PIXEL
     )
 

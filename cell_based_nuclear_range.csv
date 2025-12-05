@@ -3,3 +3,12 @@ B cells,75,80
 Epithelial cells,25,33
 Fibroblasts,6.7,16.7
 Endothelial cells,14,20
+Malignant,40,80
+Plasma,25,40
+Mono/Macro,25,40
+Myofibroblasts,8,15
+DC,60,80
+Tprolif,75,85
+CD4Tconv,75,85
+CD8T,75,85
+Mast,20,30

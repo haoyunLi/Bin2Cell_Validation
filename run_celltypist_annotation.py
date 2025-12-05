@@ -6,7 +6,7 @@ CellTypist is designed for single-cell data, but can be adapted for spatial tran
 by treating each spatial spot as a "pseudo-cell".
 
 Usage:
-    python run_celltypist_annotation.py
+    python run_celltypist_annotation.py --data_path <h5_file> --output_dir <output>
 
 Requirements:
     - celltypist
@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import logging
+import argparse
 
 # Configure logging
 logging.basicConfig(
@@ -415,13 +416,30 @@ def summarize_results(adata, output_dir):
 def main():
     """Main workflow for CellTypist annotation of Visium HD data."""
 
-    # Paths
-    base_dir = Path.cwd()
-    visium_dir = base_dir / 'Human_kidney' / 'output' / 'binned_outputs' / 'square_008um'
-    data_path = visium_dir / 'filtered_feature_bc_matrix.h5'
-    clustering_path = visium_dir / 'analysis' / 'clustering' / 'gene_expression_graphclust' / 'clusters.csv'
-    umap_path = visium_dir / 'analysis' / 'umap' / 'gene_expression_2_components' / 'projection.csv'
-    output_dir = base_dir / 'cellannotation_results_human_kidney'
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run CellTypist for cell type annotation on Visium HD data')
+    parser.add_argument('--data_path', type=str,
+                       default='Human_kidney/output/binned_outputs/square_008um/filtered_feature_bc_matrix.h5',
+                       help='Path to filtered_feature_bc_matrix.h5 file')
+    parser.add_argument('--clustering_path', type=str,
+                       default='Human_kidney/output/binned_outputs/square_008um/analysis/clustering/gene_expression_graphclust/clusters.csv',
+                       help='Path to clusters.csv file')
+    parser.add_argument('--umap_path', type=str,
+                       default='Human_kidney/output/binned_outputs/square_008um/analysis/umap/gene_expression_2_components/projection.csv',
+                       help='Path to UMAP projection.csv file')
+    parser.add_argument('--output_dir', type=str,
+                       default='cellannotation_results_human_kidney',
+                       help='Output directory for annotation results')
+    parser.add_argument('--model', type=str,
+                       default='Immune_All_High.pkl',
+                       help='CellTypist model to use')
+    args = parser.parse_args()
+
+    # Paths from arguments
+    data_path = Path(args.data_path)
+    clustering_path = Path(args.clustering_path)
+    umap_path = Path(args.umap_path)
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
 
     logger.info("="*70)
@@ -481,7 +499,7 @@ def main():
     logger.info("\nRunning CellTypist on cluster-level profiles...")
     cluster_adata, cluster_predictions = run_celltypist(
         cluster_adata,
-        model='Immune_All_High.pkl',
+        model=args.model,
         majority_voting=False  # No majority voting for cluster-level
     )
 

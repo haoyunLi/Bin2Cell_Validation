@@ -23,6 +23,11 @@ pseudo_visium_hd_outpu_full/
 validation_results/
 gene_localization_results_kidney/
 annotation_cache/
+smurf_result/
+sthd_env/
+colorectal_sc_data/
+figures/
+smurf_validation_output/
 
 # Large data files
 *.png
@@ -35,7 +40,8 @@ annotation_cache/
 *.tar.gz
 *.cloupe
 *.gz
-
+*.gtf
+*.txt
 
 # Results and outputs
 *.html

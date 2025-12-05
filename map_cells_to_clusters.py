@@ -10,13 +10,14 @@ This script:
 5. Adds 'cell_type' column to the Cellpose CSV
 
 Usage:
-    python map_cells_to_clusters.py
+    python map_cells_to_clusters.py --cellpose_csv <input> --output_csv <output>
 """
 
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import logging
+import argparse
 
 # Configure logging
 logging.basicConfig(
@@ -227,26 +228,35 @@ def load_cluster_assignments_from_h5ad(h5ad_path):
 def main():
     """Main pipeline to add cell types to Cellpose pixel-level CSV."""
 
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Add cell type annotations to Cellpose pixel-level results')
+    parser.add_argument('--cellpose_csv', type=str,
+                       default='cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_full.csv.gz',
+                       help='Path to Cellpose pixel-to-cell mapping CSV (gzipped)')
+    parser.add_argument('--tissue_positions', type=str,
+                       default='Human_kidney/output/binned_outputs/square_008um/spatial/tissue_positions.parquet',
+                       help='Path to 8μm tissue_positions.parquet')
+    parser.add_argument('--h5ad_path', type=str,
+                       default='cellannotation_results_human_kidney/visium_hd_annotated.h5ad',
+                       help='Path to annotated h5ad file')
+    parser.add_argument('--cluster_mapping', type=str,
+                       default='cellannotation_results_human_kidney/cluster_to_celltype_mapping.csv',
+                       help='Path to cluster-to-celltype mapping CSV')
+    parser.add_argument('--output_csv', type=str,
+                       default='cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_with_celltype.csv.gz',
+                       help='Output CSV path with cell type annotations')
+    args = parser.parse_args()
+
     logger.info("="*70)
     logger.info("Add Cell Type Annotations to Cellpose Pixel-Level Results")
     logger.info("="*70)
 
-    # Define paths
-    current_dir = Path.cwd()
-
-    # Input files
-    cellpose_dir = current_dir / 'cellpose_sam_human_kidney_output'
-    annotation_dir = current_dir / 'cellannotation_results_human_kidney'
-    visium_8um_dir = current_dir / 'Human_kidney' / 'output' / 'binned_outputs' / 'square_008um'
-
-    cellpose_csv = cellpose_dir / 'cropped_visium_hd_human_kidney_pixel_to_cell_mapping_full.csv.gz'
-    tissue_positions_8um = visium_8um_dir / 'spatial' / 'tissue_positions.parquet'
-    h5ad_path = annotation_dir / 'visium_hd_annotated.h5ad'
-    cluster_mapping_csv = annotation_dir / 'cluster_to_celltype_mapping.csv'
-
-    # Output
-    output_dir = current_dir / 'cellpose_sam_human_kidney_output'
-    output_csv = output_dir / 'cropped_visium_hd_human_kidney_pixel_to_cell_mapping_with_celltype.csv.gz'
+    # Paths from arguments
+    cellpose_csv = Path(args.cellpose_csv)
+    tissue_positions_8um = Path(args.tissue_positions)
+    h5ad_path = Path(args.h5ad_path)
+    cluster_mapping_csv = Path(args.cluster_mapping)
+    output_csv = Path(args.output_csv)
 
     logger.info(f"\nInput files:")
     logger.info(f"  Cellpose CSV: {cellpose_csv}")

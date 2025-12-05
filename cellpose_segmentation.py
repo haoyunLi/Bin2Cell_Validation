@@ -7,7 +7,7 @@ saves the results including pixel-level cell assignments to CSV files.
 
 Usage:
     conda activate ./cellpose
-    python cellpose_sam_segmentation.py
+    python cellpose_segmentation.py --img_path <image> --output_dir <output>
 """
 
 import numpy as np
@@ -20,6 +20,7 @@ import pandas as pd
 from PIL import Image
 import logging
 import sys
+import argparse
 
 # Disable PIL decompression bomb protection for large images
 Image.MAX_IMAGE_PIXELS = None
@@ -319,10 +320,19 @@ def create_visualization(img, masks, nuclear_masks, output_dir, image_name, down
 def main():
     """Run Cellpose-SAM segmentation on the cropped Visium HD brain image."""
 
-    # Define paths
-    current_dir = Path.cwd()
-    img_path = current_dir / 'cropped_visium_hd_human_kidney.png'
-    output_dir = current_dir / 'cellpose_sam_human_kidney_output'
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run Cellpose-SAM cell segmentation on Visium HD images')
+    parser.add_argument('--img_path', type=str,
+                       default='cropped_visium_hd_human_colorectal.png',
+                       help='Path to input image')
+    parser.add_argument('--output_dir', type=str,
+                       default='cellpose_sam_human_colorectal_output',
+                       help='Output directory for segmentation results')
+    args = parser.parse_args()
+
+    # Set paths from arguments
+    img_path = Path(args.img_path)
+    output_dir = Path(args.output_dir)
 
     # Create output directory
     output_dir.mkdir(exist_ok=True)

@@ -198,7 +198,7 @@ def load_ground_truth(ground_truth_file):
 
 
 def load_bin_to_cell_mapping(pixel_file, microns_per_pixel=0.2739038899725172):
-    """Load and create bin-to-cell mapping from pixel data (OPTIMIZED: chunked reading, vectorized operations)."""
+    """Load and create bin-to-cell mapping from pixel data with nuclear information (OPTIMIZED: chunked reading, vectorized operations)."""
     logger.info(f"Loading pixel mapping from {pixel_file}...")
 
     # OPTIMIZATION: Read in chunks to reduce memory usage
@@ -211,26 +211,32 @@ def load_bin_to_cell_mapping(pixel_file, microns_per_pixel=0.2739038899725172):
         # Convert pixels to bins immediately
         chunk['bin_x'] = (chunk['x'] * microns_per_pixel / 2.0).astype(np.int32)
         chunk['bin_y'] = (chunk['y'] * microns_per_pixel / 2.0).astype(np.int32)
-        # Drop pixel coordinates to save memory
-        chunks.append(chunk[['bin_x', 'bin_y', 'cell_id']])
+        # Keep nuclear information
+        chunks.append(chunk[['bin_x', 'bin_y', 'cell_id', 'is_nuclear']])
 
     df_pixels = pd.concat(chunks, ignore_index=True)
     logger.info(f"  Loaded {len(df_pixels):,} pixels (cells only)")
 
     # OPTIMIZATION: Use frozenset for faster membership testing
-    # Group by bin and create set of cell_ids
-    logger.info("  Creating bin-to-cell mapping (vectorized)...")
-    bin_to_cells = df_pixels.groupby(['bin_x', 'bin_y'])['cell_id'].apply(frozenset).reset_index()
-    bin_to_cells.columns = ['bin_x', 'bin_y', 'cell_ids']
+    # Group by bin and create set of cell_ids, and track if bin is nuclear
+    logger.info("  Creating bin-to-cell mapping with nuclear information (vectorized)...")
 
-    logger.info(f"  Created mapping for {len(bin_to_cells):,} bins")
+    # For each bin, aggregate cell_ids and check if bin is primarily nuclear
+    bin_aggregation = df_pixels.groupby(['bin_x', 'bin_y']).agg({
+        'cell_id': lambda x: frozenset(x),
+        'is_nuclear': lambda x: x.mean() > 0.5  # Bin is nuclear if >50% pixels are nuclear
+    }).reset_index()
+    bin_aggregation.columns = ['bin_x', 'bin_y', 'cell_ids', 'is_nuclear']
+
+    logger.info(f"  Created mapping for {len(bin_aggregation):,} bins")
+    logger.info(f"  Nuclear bins: {bin_aggregation['is_nuclear'].sum():,} ({100*bin_aggregation['is_nuclear'].mean():.1f}%)")
 
     # Count bins with multiple cells (vectorized)
-    cell_counts = bin_to_cells['cell_ids'].apply(len)
+    cell_counts = bin_aggregation['cell_ids'].apply(len)
     multi_cell_count = (cell_counts > 1).sum()
-    logger.info(f"  Bins with multiple cells: {multi_cell_count:,} ({100*multi_cell_count/len(bin_to_cells):.1f}%)")
+    logger.info(f"  Bins with multiple cells: {multi_cell_count:,} ({100*multi_cell_count/len(bin_aggregation):.1f}%)")
 
-    return bin_to_cells
+    return bin_aggregation
 
 
 def load_sc_data(h5_file, metadata_file):
@@ -312,12 +318,14 @@ def validate_bin_assignments(adata, bin_to_cells, df_gt, adata_sc, sample_size=1
     barcode_to_idx = {bc: i for i, bc in enumerate(adata.obs.index)}
 
     # OPTIMIZATION: Pre-build bin lookup dictionary (vectorized)
-    logger.info("  Building bin-to-barcode lookup (avoids repeated string formatting)...")
+    logger.info("  Building bin-to-barcode lookup with nuclear info (avoids repeated string formatting)...")
     bin_lookup = {}
     for _, row in bin_to_cells.iterrows():
         barcode = f"s_002um_{int(row['bin_x']):05d}_{int(row['bin_y']):05d}-1"
         if barcode in barcode_to_idx:
-            bin_lookup[(row['bin_x'], row['bin_y'])] = (barcode, row['cell_ids'])
+            # Store barcode, cell_ids, and whether bin is nuclear
+            is_nuclear = row.get('is_nuclear', False)  # Get nuclear flag if it exists
+            bin_lookup[(row['bin_x'], row['bin_y'])] = (barcode, row['cell_ids'], is_nuclear)
 
     results = []
 
@@ -327,19 +335,33 @@ def validate_bin_assignments(adata, bin_to_cells, df_gt, adata_sc, sample_size=1
         cell_type = row['cell_type']
 
         # OPTIMIZATION: Use pre-built lookup instead of filtering (100x faster!)
-        cell_bin_barcodes = [
-            barcode for (bx, by), (barcode, cell_ids) in bin_lookup.items()
+        # Separate nuclear and all bins
+        cell_bin_info = [
+            (barcode, is_nuclear) for (bx, by), (barcode, cell_ids, is_nuclear) in bin_lookup.items()
             if cell_id in cell_ids
         ]
 
-        if len(cell_bin_barcodes) == 0:
+        if len(cell_bin_info) == 0:
             continue
 
+        # Get all barcodes and nuclear barcodes
+        cell_bin_barcodes = [barcode for barcode, _ in cell_bin_info]
+        nuclear_bin_barcodes = [barcode for barcode, is_nuclear in cell_bin_info if is_nuclear]
+
         # OPTIMIZATION: Use sparse matrix slicing (keep sparse!)
+        # Calculate total expression across all bins
         bin_indices = [barcode_to_idx[bc] for bc in cell_bin_barcodes]
         bin_expr_full = adata.X[bin_indices, :][:, common_gene_idx_hd].sum(axis=0)
         # Convert to 1D array (sparse sum returns matrix)
         bin_expr = np.asarray(bin_expr_full).flatten()
+
+        # Calculate expression in nuclear bins only
+        if len(nuclear_bin_barcodes) > 0:
+            nuclear_bin_indices = [barcode_to_idx[bc] for bc in nuclear_bin_barcodes]
+            nuclear_expr_full = adata.X[nuclear_bin_indices, :][:, common_gene_idx_hd].sum(axis=0)
+            nuclear_expr = np.asarray(nuclear_expr_full).flatten()
+        else:
+            nuclear_expr = np.zeros_like(bin_expr)
 
         # Get sc expression for this cell (OPTIMIZATION: keep sparse, use slicing)
         if sc_barcode not in adata_sc.obs.index:
@@ -365,11 +387,25 @@ def validate_bin_assignments(adata, bin_to_cells, df_gt, adata_sc, sample_size=1
             corr = np.nan
             corr_nonzero = np.nan
 
+        # Calculate nuclear read percentage
+        total_reads = bin_expr.sum()
+        nuclear_reads = nuclear_expr.sum()
+        if total_reads > 0:
+            nuclear_read_percentage = (nuclear_reads / total_reads) * 100
+            passes_15_percent = nuclear_read_percentage >= 15.0
+        else:
+            nuclear_read_percentage = 0.0
+            passes_15_percent = False
+
         results.append({
             'cell_id': cell_id,
             'cell_type': cell_type,
             'n_bins': len(cell_bin_barcodes),
+            'n_nuclear_bins': len(nuclear_bin_barcodes),
             'total_counts_bins': float(bin_expr.sum()),
+            'nuclear_counts_bins': float(nuclear_expr.sum()),
+            'nuclear_read_percentage': nuclear_read_percentage,
+            'passes_15_percent_threshold': passes_15_percent,
             'total_counts_sc': float(sc_expr.sum()),
             'correlation_all': corr,
             'correlation_nonzero': corr_nonzero,
@@ -391,11 +427,22 @@ def validate_bin_assignments(adata, bin_to_cells, df_gt, adata_sc, sample_size=1
     logger.info(f"  Cells with corr > 0.5: {(df_results['correlation_all'] > 0.5).sum()} ({100*(df_results['correlation_all'] > 0.5).mean():.1f}%)")
     logger.info(f"  Cells with corr > 0.7: {(df_results['correlation_all'] > 0.7).sum()} ({100*(df_results['correlation_all'] > 0.7).mean():.1f}%)")
 
+    # Nuclear read percentage metrics
+    logger.info("\n  Nuclear Read Percentage:")
+    logger.info(f"  Mean nuclear read %: {df_results['nuclear_read_percentage'].mean():.2f}%")
+    logger.info(f"  Median nuclear read %: {df_results['nuclear_read_percentage'].median():.2f}%")
+    logger.info(f"  Cells passing 15% threshold: {df_results['passes_15_percent_threshold'].sum()} ({100*df_results['passes_15_percent_threshold'].mean():.1f}%)")
+
     # Per cell type
     logger.info("\n  Correlation by cell type:")
     for ct in df_results['cell_type'].unique():
         ct_data = df_results[df_results['cell_type'] == ct]
         logger.info(f"    {ct}: {ct_data['correlation_all'].mean():.3f} (n={len(ct_data)})")
+
+    logger.info("\n  Nuclear read % by cell type:")
+    for ct in df_results['cell_type'].unique():
+        ct_data = df_results[df_results['cell_type'] == ct]
+        logger.info(f"    {ct}: {ct_data['nuclear_read_percentage'].mean():.2f}% (pass rate: {100*ct_data['passes_15_percent_threshold'].mean():.1f}%)")
 
     return df_results
 
@@ -524,9 +571,20 @@ def main():
     parser.add_argument('--pseudo_hd_dir', type=str,
                        default='pseudo_visium_hd_output',
                        help='Path to pseudo Visium HD output directory')
-    parser.add_argument('--output_dir', type=str, default='validation_results',
+    parser.add_argument('--output_dir', type=str,
+                       default='validation_results',
                        help='Output directory for validation results')
-    parser.add_argument('--sample_size', type=int, default=100,
+    parser.add_argument('--pixel_file', type=str,
+                       default='cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_expanded.csv.gz',
+                       help='Path to pixel-to-cell mapping CSV (gzipped)')
+    parser.add_argument('--sc_h5_file', type=str,
+                       default='kidney_sc_data/KIRC_GSE159115_expression.h5',
+                       help='Path to single-cell H5 expression file')
+    parser.add_argument('--sc_meta_file', type=str,
+                       default='kidney_sc_data/KIRC_GSE159115_CellMetainfo_table.tsv',
+                       help='Path to single-cell metadata TSV file')
+    parser.add_argument('--sample_size', type=int,
+                       default=100,
                        help='Number of cells to sample for validation')
 
     args = parser.parse_args()
@@ -537,12 +595,12 @@ def main():
     logger.info("Streams 33GB matrix file to avoid OOM (uses <5GB RAM)")
     logger.info("")
 
-    # Paths
+    # Paths from arguments
     pseudo_hd_dir = Path(args.pseudo_hd_dir)
     ground_truth_file = pseudo_hd_dir / 'ground_truth_cell_assignments.csv'
-    pixel_file = Path('cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_expanded.csv.gz')
-    sc_h5_file = Path('kidney_sc_data/KIRC_GSE159115_expression.h5')
-    sc_meta_file = Path('kidney_sc_data/KIRC_GSE159115_CellMetainfo_table.tsv')
+    pixel_file = Path(args.pixel_file)
+    sc_h5_file = Path(args.sc_h5_file)
+    sc_meta_file = Path(args.sc_meta_file)
     output_dir = Path(args.output_dir)
 
     # STEP 1: Identify required bins FIRST (before loading matrix)
