@@ -24,4 +24,4 @@ fastparquet>=0.8.0
 celltypist>=1.7.0
 # Latest released version on PyPI is 1.10.3
 scanpy>=1.10.3
-scikit-misc>=0.5.0
+scikit-misc>=0.3.0
