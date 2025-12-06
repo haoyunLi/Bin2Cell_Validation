@@ -1182,7 +1182,7 @@ def main():
     organism = getattr(config, 'ORGANISM', 'human')
 
     # Import and call the classification function
-    from gene_localization_GO_analysis import classify_genes_aggregate, save_results
+    from gene_localization_GO_analysis import classify_genes_aggregate
 
     results = classify_genes_aggregate(
         genes=list(adata_sc.var_names),

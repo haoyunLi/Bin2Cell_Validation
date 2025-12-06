@@ -631,9 +631,11 @@ conda activate ./cellpose
 # Install Cellpose
 pip install cellpose[gui]
 
-# Optional: Install additional dependencies for large image processing
-pip install scikit-image pandas
+# Install required dependencies for cellpose_segmentation.py
+pip install matplotlib scikit-image pandas scipy Pillow
 ```
+
+**Note:** The `cellpose_segmentation.py` script requires matplotlib, scipy, and other dependencies to run. Make sure these are installed in the cellpose environment before running the script.
 
 ### 3. Install STHD (cell type deconvolution)
 
@@ -641,8 +643,8 @@ STHD requires Python ≥ 3.8. Create a dedicated virtual environment so it does 
 interfere with the rest of the toolchain.
 
 ```bash
-# Create a Python 3.8 virtual environment inside this repo
-python3.8 -m venv sthd_env
+# Create a Python 3.12 virtual environment inside this repo
+python3.12 -m venv sthd_env
 source sthd_env/bin/activate
 python -m pip install --upgrade pip
 ```
