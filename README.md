@@ -613,11 +613,11 @@ Tools can be evaluated on:
 ### 1. Create Conda Environment
 
 ```bash
-# Create environment in local directory 
-conda create --prefix ./Bin2Cell_Validation python=3.12 -y
-conda activate ./Bin2Cell_Validation
+# Create shared environment
+conda create -n bin2cell python=3.12 -y
+conda activate bin2cell
 
-# Install dependencies
+# Install the project dependencies
 pip install -r requirements.txt
 ```
 
@@ -709,4 +709,3 @@ Choose the build that matches your hardware:
 
   The full install expects CUDA-enabled drivers and will pull the optional GPU
   dependencies required by the “full” SMURF pipeline.
-

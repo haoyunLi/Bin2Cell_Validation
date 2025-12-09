@@ -28,6 +28,8 @@ sthd_env/
 colorectal_sc_data/
 figures/
 smurf_validation_output/
+bin2cell_env/
+bin2cell_results_colorectal/
 
 # Large data files
 *.png

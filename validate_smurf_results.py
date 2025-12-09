@@ -587,16 +587,17 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_smurf, df_overlap):
             continue
 
         # Get gene expression from SMURF cell
-        # SMURF cells are indexed by cell number (1, 2, 3, ...)
-        smurf_cell_idx = int(smurf_cell_id) - 1
-        if smurf_cell_idx >= adata_smurf.n_obs:
+        # SMURF cell IDs are NOT sequential (e.g., 5, 7, 11, ..., 155702)
+        # They're stored as strings with .0 suffix in obs_names
+        smurf_cell_key = f"{int(smurf_cell_id)}.0"
+        if smurf_cell_key not in adata_smurf.obs_names:
             filter_counts['smurf_idx_out_of_range'] += 1
             continue
 
         # Extract expression for common genes (ensure same order!)
         gt_expr = adata_sc_gt[sc_barcode, common_genes].X.toarray().flatten()
         # Get SMURF expression in the same gene order as GT
-        smurf_expr = adata_smurf[adata_smurf.obs_names[smurf_cell_idx], common_genes].X.toarray().flatten()
+        smurf_expr = adata_smurf[smurf_cell_key, common_genes].X.toarray().flatten()
 
         # Verify same length (sanity check)
         if len(gt_expr) != len(smurf_expr):
@@ -1018,6 +1019,8 @@ def main():
 
     # Step 9: Save annotated SMURF data
     logger.info("Saving annotated SMURF data...")
+    # Convert gt_cell_id to string to avoid h5py serialization errors
+    adata_smurf_annotated.obs['gt_cell_id'] = adata_smurf_annotated.obs['gt_cell_id'].astype(str)
     adata_smurf_annotated.write(output_dir / 'adata_smurf_annotated.h5ad')
     annotation_df.to_csv(output_dir / 'smurf_cell_annotations.csv', index=False)
     match_df.to_csv(output_dir / 'nuclear_bin_matches.csv', index=False)
