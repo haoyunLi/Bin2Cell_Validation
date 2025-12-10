@@ -232,6 +232,9 @@ def main():
     parser.add_argument('--output_dir', type=str,
                        default='smurf_result',
                        help='Output directory for SMURF results')
+    parser.add_argument('--microns_per_pixel', type=float,
+                       default=0.2739038899725172,
+                       help='Microns per pixel conversion factor')
     args = parser.parse_args()
 
     save_path = args.output_dir
@@ -422,7 +425,7 @@ def main():
     unique_cells = unique_cells[unique_cells > 0]  # Exclude background (0)
 
     # Bin size parameters (matching validation scripts)
-    microns_per_pixel = 0.2739038899725172
+    microns_per_pixel = args.microns_per_pixel
     bin_size = 2.0  # 2 micron bins
 
     # Dictionaries to store bin information per cell

@@ -960,6 +960,9 @@ def main():
     parser.add_argument('--output_dir', type=str,
                        default='smurf_validation_output',
                        help='Output directory for validation results')
+    parser.add_argument('--microns_per_pixel', type=float,
+                       default=0.2739038899725172,
+                       help='Microns per pixel conversion factor')
     args = parser.parse_args()
 
     logger.info("="*80)
@@ -984,7 +987,9 @@ def main():
     df_gt, df_pixels, adata_sc_gt = load_ground_truth(gt_file, pixel_file, sc_h5_path, sc_metadata_path)
 
     # Step 3: Build spatial regions (both nuclear and whole cell)
-    gt_nuclear_regions, gt_whole_regions = build_ground_truth_cell_regions(df_pixels)
+    gt_nuclear_regions, gt_whole_regions = build_ground_truth_cell_regions(
+        df_pixels, microns_per_pixel=args.microns_per_pixel
+    )
     smurf_nuclear_regions, smurf_whole_regions = get_smurf_cell_regions(smurf_nuclear_bins, smurf_all_bins)
 
     # Step 4: Match cells based on NUCLEAR overlap - ANY overlap counts as ground truth match
@@ -1006,7 +1011,8 @@ def main():
 
     # Step 7: Create overlay visualization (skip if no matches to save time)
     if len(cell_matches) > 0:
-        create_overlay_visualization(df_pixels, pixels_cells, segmentation_final, cell_matches, df_overlap, output_dir)
+        create_overlay_visualization(df_pixels, pixels_cells, segmentation_final, cell_matches, df_overlap, output_dir,
+                                     microns_per_pixel=args.microns_per_pixel)
     else:
         logger.warning("="*80)
         logger.warning("WARNING: No cells matched! Skipping overlay visualization.")

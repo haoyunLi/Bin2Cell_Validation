@@ -586,6 +586,9 @@ def main():
     parser.add_argument('--sample_size', type=int,
                        default=100,
                        help='Number of cells to sample for validation')
+    parser.add_argument('--microns_per_pixel', type=float,
+                       default=0.2739038899725172,
+                       help='Microns per pixel conversion factor')
 
     args = parser.parse_args()
 
@@ -605,7 +608,8 @@ def main():
 
     # STEP 1: Identify required bins FIRST (before loading matrix)
     sampled_cells, required_bins = identify_required_bins(
-        ground_truth_file, pixel_file, args.sample_size
+        ground_truth_file, pixel_file, args.sample_size,
+        microns_per_pixel=args.microns_per_pixel
     )
 
     # STEP 2: Load ONLY required bins using streaming (memory efficient!)
@@ -613,7 +617,8 @@ def main():
 
     # STEP 3: Load other data (lightweight)
     df_gt = sampled_cells  # Already have sampled cells from step 1
-    bin_to_cells = load_bin_to_cell_mapping(pixel_file)
+    bin_to_cells = load_bin_to_cell_mapping(pixel_file,
+                                             microns_per_pixel=args.microns_per_pixel)
     adata_sc = load_sc_data(sc_h5_file, sc_meta_file)
 
     # STEP 4: Validate
