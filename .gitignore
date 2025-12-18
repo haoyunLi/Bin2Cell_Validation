@@ -30,6 +30,7 @@ figures/
 smurf_validation_output/
 bin2cell_env/
 bin2cell_results_colorectal/
+bin2cell_validation_output/
 
 # Large data files
 *.png
@@ -78,4 +79,4 @@ venv.bak/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-
+!smurf_requirements.txt

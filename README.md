@@ -6,6 +6,27 @@ This repository provides a validation pipeline to test the performance of differ
 
 This validation method creates ground truth data by combining whole-cell segmentation, cell type annotation, and single-cell RNA-seq data assignment. The goal is to evaluate whether bin-to-cell tools can accurately recover cell-level gene expression and cell boundaries from binned Visium HD data.
 
+## Bin-to-Cell Tools Validated
+
+This pipeline currently supports validation of the following bin-to-cell assignment tools:
+
+1. **SMURF** - Nuclear segmentation-based approach using StarDist for nuclear detection followed by cell expansion
+   - Performs nuclear segmentation on H&E images
+   - Expands nuclei to whole cells using spatial constraints
+   - Assigns bins to cells based on spatial overlap
+   - [GitHub](https://github.com/dpeerlab/smurf)
+
+2. **Bin2Cell** - Deep learning-based bin-to-cell assignment
+   - Uses StarDist for nuclear segmentation
+   - Employs graph-based methods for cell boundary reconstruction
+   - Integrates gene expression patterns for assignment refinement
+   - [GitHub](https://github.com/broadinstitute/Bin2Cell)
+
+Both tools are evaluated using the same metrics:
+- **Nuclear Matching Accuracy**: How well detected nuclei match ground truth
+- **Spatial Overlap (IoU)**: Whole cell boundary accuracy
+- **Gene Expression Correlation**: Recovery of cell-level gene expression profiles
+
 ## Pipeline Overview
 
 The validation pipeline consists of the following steps:
@@ -18,6 +39,7 @@ current kidney/colorectal examples—update them to match your dataset.
 1. **Crop Visium HD image first**
 
    ```bash
+   conda activate $WORK_DIR/Bin2Cell_Validation
    # Uses paths defined inside crop_visium_hd_script.py
    python crop_visium_hd_script.py
    ```
@@ -36,6 +58,7 @@ current kidney/colorectal examples—update them to match your dataset.
    SMURF pipeline expects.
 
    ```bash
+   conda activate $WORK_DIR/Bin2Cell_Validation
    # Update default paths inside the script if needed
    python stardist_nuclear_segmentation.py
    ```
@@ -85,6 +108,7 @@ current kidney/colorectal examples—update them to match your dataset.
 5. **Run nuclear expansion** (required before pseudo HD creation):
 
    ```bash
+   conda activate $WORK_DIR/Bin2Cell_Validation
    python nuclear_expansion.py \
        --input_csv cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_with_celltype.csv.gz \
        --output_csv cellpose_sam_human_kidney_output/cropped_visium_hd_human_kidney_pixel_to_cell_mapping_expanded.csv.gz \
@@ -96,12 +120,14 @@ current kidney/colorectal examples—update them to match your dataset.
 6. **Generate pseudo Visium HD data** (uses `config_pseudo_hd.py` for paths):
 
    ```bash
+   conda activate $WORK_DIR/Bin2Cell_Validation
    python create_pseudo_visium_hd.py
    ```
 
 7. **Validate pseudo HD cell assignments** to confirm the ground-truth mapping:
 
    ```bash
+   conda activate $WORK_DIR/Bin2Cell_Validation
    python validate_cell_assignments.py \
        --pseudo_hd_dir pseudo_visium_hd_outpu_full \
        --output_dir validation_results \
@@ -125,6 +151,18 @@ current kidney/colorectal examples—update them to match your dataset.
    conda deactivate
    ```
 
+8b. **Run Bin2Cell analysis over pseudo HD data:**
+
+   ```bash
+   conda activate bin2cell
+   python run_bin2cell_analysis.py \
+       --visium_dir pseudo_visium_hd_outpu_full \
+       --tissue_image Human_Colorectal/input/Visium_HD_Human_Colon_Cancer_tissue_image.btf \
+       --output_dir bin2cell_results_colorectal \
+       --microns_per_pixel 0.2739038899725172
+   conda deactivate
+   ```
+
 9. **Validate SMURF output** (nuclear overlap, whole-cell IoU, gene correlation):
 
    ```bash
@@ -140,8 +178,23 @@ current kidney/colorectal examples—update them to match your dataset.
    conda deactivate
    ```
 
+10. **Validate Bin2Cell output** (nuclear overlap, whole-cell IoU, gene correlation):
+
+   ```bash
+   conda activate $WORK_DIR/Bin2Cell_Validation
+   python validate_bin2cell_results.py \
+       --bin2cell_dir bin2cell_results_colorectal \
+       --pseudo_hd_dir pseudo_visium_hd_outpu_full \
+       --pixel_file cellpose_sam_human_colorectal_output/cropped_visium_hd_human_colorectal_pixel_to_cell_mapping_expanded.csv.gz \
+       --sc_h5_file colorectal_sc_data/CRC_GSE166555_expression.h5 \
+       --sc_meta_file colorectal_sc_data/CRC_GSE166555_CellMetainfo_table.tsv \
+       --output_dir bin2cell_validation_output \
+       --microns_per_pixel 0.2739038899725172
+   conda deactivate
+   ```
+
 Steps 3 and 4b are optional, but the rest should be executed sequentially to keep
-metadata synchronized for downstream validation and SMURF benchmarking.
+metadata synchronized for downstream validation and benchmarking of bin-to-cell assignment tools (SMURF, Bin2Cell, etc.).
 
 
 
@@ -224,25 +277,68 @@ reproducible, and always activate `sthd_env` before invoking `sthd_annotation.py
 It is recommended to run SMURF inside its own Conda environment—this mirrors the
 cluster scripts and keeps TensorFlow/StarDist isolated from the rest of the repo.
 
+**IMPORTANT:** Use the provided `smurf_requirements.txt` to ensure all packages have compatible versions (especially NumPy 1.26.4, which is required for StarDist compatibility).
+
 ```bash
 conda create -n smurf python=3.10 -y
 conda activate smurf
 python -m pip install --upgrade pip
+
+# Install all dependencies with exact versions to avoid compatibility issues
+pip install -r smurf_requirements.txt
 ```
 
-Choose the build that matches your hardware:
+This will install:
+- pysmurf 1.0.3
+- numpy 1.26.4 (NumPy 2.x causes StarDist import errors)
+- tensorflow 2.20.0
+- torch 2.8.0
+- stardist 0.9.1
+- All other required packages with tested versions
 
-- **Lite version (CPU-only):**
+**Known Issue:** If you install SMURF manually without using `smurf_requirements.txt`, you may encounter NumPy 2.x compatibility errors:
+```
+AttributeError: _ARRAY_API not found
+ImportError: numpy.core.multiarray failed to import
+```
 
-  ```bash
-  pip install pysmurf
-  ```
+**Solution:** Always use `smurf_requirements.txt` for installation to avoid version conflicts.
 
-- **Full version (GPU, recommended for production):**
+### 5. Install Bin2Cell (bin-to-cell assignment tool)
 
-  ```bash
-  pip install "pysmurf[full]"
-  ```
+```bash
+# Create Bin2Cell conda environment
+conda create -n bin2cell python=3.12 -y
+conda activate bin2cell
+pip install --upgrade pip
 
-  The full install expects CUDA-enabled drivers and will pull the optional GPU
-  dependencies required by the “full” SMURF pipeline.
+# Install bin2cell with dependencies (recommended)
+pip install -r requirements_bin2cell.txt
+
+# Verify installation
+python -c "import bin2cell; import numpy; import tensorflow; import stardist; print('Success!')"
+```
+
+**Important:** Using `requirements_bin2cell.txt` ensures compatible dependency versions (NumPy 1.x, pandas 2.1.x, scipy 1.13.x).
+
+**Known Issue - Sparse Matrix Bug:** Bin2Cell v0.3.4 has a bug that may cause errors during label insertion. If you encounter:
+```
+ValueError: setting an array element with a sequence
+TypeError: int() argument must be a csr_matrix
+```
+
+Fix by editing the bin2cell source file:
+```bash
+# Open the file
+nano ~/anaconda3/envs/bin2cell/lib/python3.12/site-packages/bin2cell/bin2cell.py
+
+# Find line ~1353 and change from:
+adata.obs.loc[mask, labels_key] = np.asarray(labels_sparse[coords[mask,0], coords[mask,1]]).flatten()
+
+# To:
+sparse_result = labels_sparse[coords[mask,0], coords[mask,1]]
+if hasattr(sparse_result, 'toarray'):
+    adata.obs.loc[mask, labels_key] = sparse_result.toarray().flatten()
+else:
+    adata.obs.loc[mask, labels_key] = np.asarray(sparse_result).flatten()
+```
