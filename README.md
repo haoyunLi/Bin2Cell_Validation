@@ -155,11 +155,14 @@ current kidney/colorectal examples—update them to match your dataset.
 
    ```bash
    conda activate bin2cell
-   python run_bin2cell_analysis.py \
-       --visium_dir pseudo_visium_hd_outpu_full \
-       --tissue_image Human_Colorectal/input/Visium_HD_Human_Colon_Cancer_tissue_image.btf \
-       --output_dir bin2cell_results_colorectal \
-       --microns_per_pixel 0.2739038899725172
+    # Run bin2cell analysis for colorectal dataset
+    python run_bin2cell_analysis.py \
+        --pseudo_hd_dir pseudo_visium_hd_outpu_full \
+        --image_path Human_Colorectal/input/Visium_HD_Human_Colon_Cancer_tissue_image.btf \
+        --output_dir bin2cell_results_colorectal \
+        --dataset_name human_colorectal \
+        --mpp 0.2737012522439323 \
+        --prob_thresh_he 0.01 
    conda deactivate
    ```
 
@@ -183,13 +186,13 @@ current kidney/colorectal examples—update them to match your dataset.
    ```bash
    conda activate $WORK_DIR/Bin2Cell_Validation
    python validate_bin2cell_results.py \
-       --bin2cell_dir bin2cell_results_colorectal \
-       --pseudo_hd_dir pseudo_visium_hd_outpu_full \
-       --pixel_file cellpose_sam_human_colorectal_output/cropped_visium_hd_human_colorectal_pixel_to_cell_mapping_expanded.csv.gz \
-       --sc_h5_file colorectal_sc_data/CRC_GSE166555_expression.h5 \
-       --sc_meta_file colorectal_sc_data/CRC_GSE166555_CellMetainfo_table.tsv \
-       --output_dir bin2cell_validation_output \
-       --microns_per_pixel 0.2739038899725172
+        --bin2cell_dir bin2cell_results_colorectal \
+        --pseudo_hd_dir pseudo_visium_hd_outpu_full \
+        --pixel_file cellpose_sam_human_colorectal_output/cropped_visium_hd_human_olorectal_pixel_to_cell_mapping_expanded.csv.gz \
+        --sc_h5_file colorectal_sc_data/CRC_GSE166555_expression.h5 \
+        --sc_meta_file colorectal_sc_data/CRC_GSE166555_CellMetainfo_table.tsv \
+        --output_dir bin2cell_validation_output \
+        --microns_per_pixel 0.2737012522439323
    conda deactivate
    ```
 
