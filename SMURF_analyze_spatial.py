@@ -32,7 +32,7 @@ def stardist_2D_versatile_he(img, nms_thresh=None, prob_thresh=None, return_deta
     return labels
 
 
-def segment_image_tiles(image, loop=4700, gap=80, prob_thresh_default=0.4, nms_thresh_default=0.3):
+def segment_image_tiles(image, loop=4700, gap=80, prob_thresh_default=0.01, nms_thresh_default=0.3):
     """Segment large image by processing it in tiles"""
     i_max = image.shape[0]
     j_max = image.shape[1]
@@ -275,7 +275,7 @@ def main():
 
         # Perform tile-based segmentation with confidence tracking
         segmentation_results, confidence_scores = segment_image_tiles(image, loop=4700, gap=80,
-                                                                     prob_thresh_default=0.4,
+                                                                     prob_thresh_default=0.01,
                                                                      nms_thresh_default=0.3)
 
         # Combine tiles into final segmentation
