@@ -24,6 +24,13 @@ def stardist_2D_versatile_he(img, nms_thresh=None, prob_thresh=None, return_deta
     img = normalize(img, 1, 99.8, axis=axis_norm)
     model = StarDist2D.from_pretrained("2D_versatile_he")
 
+    # Override model thresholds with our custom values if provided
+    # This ensures our prob_thresh parameter is actually used
+    if prob_thresh is not None:
+        model.thresholds = {'prob': prob_thresh, 'nms': nms_thresh if nms_thresh is not None else model.thresholds.get('nms', 0.3)}
+    elif nms_thresh is not None:
+        model.thresholds = {'prob': model.thresholds.get('prob', 0.5), 'nms': nms_thresh}
+
     labels, details = model.predict_instances(
         img, nms_thresh=nms_thresh, prob_thresh=prob_thresh
     )

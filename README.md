@@ -287,23 +287,18 @@ conda create -n smurf python=3.10 -y
 conda activate smurf
 python -m pip install --upgrade pip
 
-# Choose the build that matches your hardware:
-# For GPU support (recommended):
-pip install "pysmurf[full]"
-
-# OR for CPU-only:
-# pip install pysmurf
-
-# Then install all dependencies with exact versions to avoid compatibility issues
+# Install all dependencies from requirements file
+# This includes pysmurf 1.0.3 and all required packages with tested versions
 pip install -r smurf_requirements.txt
 ```
 
 This will install:
-- pysmurf 1.0.3 (with full GPU support if using [full] option)
+- pysmurf 1.0.3 (with GPU support)
 - numpy 1.26.4 (NumPy 2.x causes StarDist import errors)
 - tensorflow 2.20.0
 - torch 2.8.0
 - stardist 0.9.1
+- igraph 0.11.9 with texttable 1.7.0 (required dependency)
 - All other required packages with tested versions
 
 **Known Issue:** If you install SMURF manually without using `smurf_requirements.txt`, you may encounter NumPy 2.x compatibility errors:
