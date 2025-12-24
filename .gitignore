@@ -32,6 +32,7 @@ bin2cell_env/
 bin2cell_results_colorectal/
 bin2cell_validation_output/
 kidney_pseudo_visium_hd_output_full/
+kidney_smurf_result/
 
 # Large data files
 *.png
@@ -81,3 +82,4 @@ venv.bak/
 .ipynb_checkpoints/
 
 !smurf_requirements.txt
+!requirements_bin2cell.txt
