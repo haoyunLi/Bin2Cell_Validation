@@ -35,6 +35,10 @@ import sys
 # Disable OpenCV pixel limit to allow loading very large images (BTF files)
 os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = str(pow(2,40))  # Allow up to 1 trillion pixels
 
+# Disable PIL decompression bomb protection for large microscopy images
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = None
+
 import cv2
 
 import bin2cell as b2c
