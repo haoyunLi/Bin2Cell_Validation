@@ -9,19 +9,19 @@ from pathlib import Path
 BASE_DIR = Path.cwd()
 
 # Input paths
-CELLPOSE_DIR = BASE_DIR / 'cellpose_sam_human_kidney_output'
-PIXEL_MAPPING_CSV = CELLPOSE_DIR / 'cropped_visium_hd_human_kidney_pixel_to_cell_mapping_expanded.csv.gz'
+CELLPOSE_DIR = BASE_DIR / 'cellpose_sam_human_colorectal_output'
+PIXEL_MAPPING_CSV = CELLPOSE_DIR / 'cropped_visium_hd_human_colorectal_pixel_to_cell_mapping_expanded.csv.gz'
 
 # Single-cell data (H5 + TSV format)
-SC_DATA_DIR = BASE_DIR / 'kidney_sc_data'
-SC_H5_PATH = SC_DATA_DIR / 'KIRC_GSE159115_expression.h5'
-SC_METADATA_PATH = SC_DATA_DIR / 'KIRC_GSE159115_CellMetainfo_table.tsv'
+SC_DATA_DIR = BASE_DIR / 'colorectal_sc_data'
+SC_H5_PATH = SC_DATA_DIR / 'CRC_GSE166555_expression.h5'
+SC_METADATA_PATH = SC_DATA_DIR / 'CRC_GSE166555_CellMetainfo_table.tsv'
 
 # Output paths
-OUTPUT_DIR = BASE_DIR / 'kidney_pseudo_visium_hd_output_full'
+OUTPUT_DIR = BASE_DIR / 'colorectal_pseudo_visium_hd_output_full'
 
 # Parameters
-MICRONS_PER_PIXEL = 0.2739038899725172  # Image resolution
+MICRONS_PER_PIXEL = 0.2737012522439323  # Image resolution
 
 MEMBRANE_CUTOFF = 1  # Membrane zone: 0 to this many 2µm bins FROM boundary (closer to boundary = more reads)
                      # NOTE: Was 10 pixels (2.7µm) → now 1 bin (2µm) due to bin-level optimization
@@ -43,7 +43,7 @@ SC_CELL_TYPE_COLUMN = 'cell_type'  # Change if your column has a different name
 # Original Visium HD data (to match barcodes and structure)
 # Set to the extracted binned_outputs/square_002um directory from the original data
 # If None, will generate new synthetic data without matching original structure
-ORIGINAL_HD_DIR = 'Human_kidney/output/binned_outputs/square_002um'
+ORIGINAL_HD_DIR = 'Human_Colorectal/output/binned_outputs/square_002um'
 
 # Random seed for reproducibility
 RANDOM_SEED = 42

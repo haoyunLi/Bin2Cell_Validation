@@ -459,9 +459,10 @@ def calculate_spatial_overlap(gt_whole_regions, smurf_whole_regions, cell_matche
             - gt_cell_id
             - smurf_cell_id (matched based on nuclear overlap)
             - nuclear_match: whether cells were matched
-            - overlap_percent (IoU * 100 for whole cell)
-            - precision (intersection / smurf_cell_size)
-            - recall (intersection / gt_cell_size)
+            - iou: Intersection over Union
+            - f1_score: F1 score (harmonic mean of precision and recall)
+            - precision: intersection / smurf_cell_size
+            - recall: intersection / gt_cell_size
     """
     logger.info("Calculating whole-cell spatial overlap for matched cells...")
 
@@ -479,13 +480,21 @@ def calculate_spatial_overlap(gt_whole_regions, smurf_whole_regions, cell_matche
                 union = len(gt_bins | smurf_bins)
                 iou = intersection / union if union > 0 else 0
 
+                # Calculate precision and recall as ratios (0-1)
+                precision = intersection / len(smurf_bins) if len(smurf_bins) > 0 else 0
+                recall = intersection / len(gt_bins) if len(gt_bins) > 0 else 0
+
+                # Calculate F1 score
+                f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
                 results.append({
                     'gt_cell_id': gt_cell_id,
                     'smurf_cell_id': smurf_cell_id,
                     'nuclear_match': True,
-                    'overlap_percent': iou * 100,
-                    'precision': (intersection / len(smurf_bins) * 100) if len(smurf_bins) > 0 else 0,
-                    'recall': (intersection / len(gt_bins) * 100) if len(gt_bins) > 0 else 0,
+                    'iou': iou,
+                    'f1_score': f1_score,
+                    'precision': precision,
+                    'recall': recall,
                     'intersection_bins': intersection,
                     'gt_cell_bins': len(gt_bins),
                     'smurf_cell_bins': len(smurf_bins)
@@ -496,7 +505,8 @@ def calculate_spatial_overlap(gt_whole_regions, smurf_whole_regions, cell_matche
                     'gt_cell_id': gt_cell_id,
                     'smurf_cell_id': None,
                     'nuclear_match': False,
-                    'overlap_percent': 0,
+                    'iou': 0,
+                    'f1_score': 0,
                     'precision': 0,
                     'recall': 0,
                     'intersection_bins': 0,
@@ -509,7 +519,8 @@ def calculate_spatial_overlap(gt_whole_regions, smurf_whole_regions, cell_matche
                 'gt_cell_id': gt_cell_id,
                 'smurf_cell_id': None,
                 'nuclear_match': False,
-                'overlap_percent': 0,
+                'iou': 0,
+                'f1_score': 0,
                 'precision': 0,
                 'recall': 0,
                 'intersection_bins': 0,
@@ -524,7 +535,8 @@ def calculate_spatial_overlap(gt_whole_regions, smurf_whole_regions, cell_matche
 
     logger.info(f"  Completed spatial overlap calculation for {len(df_overlap)} cells")
     logger.info(f"  Cells with nuclear match: {df_overlap['nuclear_match'].sum()}")
-    logger.info(f"  Average whole-cell overlap (IoU): {df_overlap[df_overlap['nuclear_match']]['overlap_percent'].mean():.2f}%")
+    logger.info(f"  Average whole-cell overlap (IoU): {df_overlap[df_overlap['nuclear_match']]['iou'].mean():.4f}")
+    logger.info(f"  Average F1 score: {df_overlap[df_overlap['nuclear_match']]['f1_score'].mean():.3f}")
 
     return df_overlap
 
@@ -605,10 +617,13 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_smurf, df_overlap):
             filter_counts['gene_length_mismatch'] += 1
             continue
 
-        # Calculate correlations
+        # Calculate correlations and RMSE
         if len(gt_expr) > 0 and len(smurf_expr) > 0 and np.std(gt_expr) > 0 and np.std(smurf_expr) > 0:
             pearson_corr, pearson_pval = pearsonr(gt_expr, smurf_expr)
             spearman_corr, spearman_pval = spearmanr(gt_expr, smurf_expr)
+
+            # Calculate RMSE (Root Mean Squared Error)
+            rmse = np.sqrt(np.mean((gt_expr - smurf_expr) ** 2))
 
             results.append({
                 'gt_cell_id': gt_cell_id,
@@ -618,6 +633,7 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_smurf, df_overlap):
                 'pearson_pval': pearson_pval,
                 'spearman_corr': spearman_corr,
                 'spearman_pval': spearman_pval,
+                'rmse': rmse,
                 'n_common_genes': len(common_genes),
                 'gt_mean_expr': np.mean(gt_expr),
                 'smurf_mean_expr': np.mean(smurf_expr)
@@ -819,109 +835,354 @@ def create_overlay_visualization(df_pixels, pixels_cells, segmentation_final, ce
     logger.info(f"  Saved legend to {output_path / 'overlay_legend.png'}")
 
 
-def generate_validation_report(df_overlap, df_corr, output_dir):
+def create_segmentation_boxplots_by_celltype(df_overlap, df_gt, output_dir):
     """
-    Generate comprehensive validation report with visualizations.
+    Create box plots for segmentation metrics (IoU, F1, Precision, Recall) by cell type.
+    Each metric gets its own TIFF file.
+    """
+    logger.info("Creating segmentation box plots by cell type...")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    # Merge with ground truth to get cell types
+    df_merged = df_overlap.merge(df_gt[['cell_id', 'cell_type']], left_on='gt_cell_id', right_on='cell_id', how='left')
+
+    # Filter to matched cells only and remove NaN cell types
+    df_matched = df_merged[df_merged['nuclear_match']].copy()
+    df_matched = df_matched[df_matched['cell_type'].notna()].copy()
+
+    if len(df_matched) == 0:
+        logger.warning("  No matched cells found, skipping box plots")
+        return
+
+    # Metrics to plot
+    metrics = ['iou', 'f1_score', 'precision', 'recall']
+    metric_names = ['IoU', 'F1 Score', 'Precision', 'Recall']
+
+    for metric, metric_name in zip(metrics, metric_names):
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        # Prepare data for box plot (exclude NaN cell types)
+        cell_types = sorted(df_matched['cell_type'].unique())
+        data_to_plot = [df_matched[df_matched['cell_type'] == ct][metric].values for ct in cell_types]
+
+        # Create box plot
+        bp = ax.boxplot(data_to_plot, labels=cell_types, patch_artist=True)
+
+        # Color the boxes
+        colors = plt.cm.Set3(range(len(cell_types)))
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+
+        ax.set_xlabel('Cell Type', fontsize=12)
+        ax.set_ylabel(metric_name, fontsize=12)
+        ax.set_title(f'{metric_name} by Cell Type', fontsize=14, fontweight='bold')
+        ax.grid(axis='y', alpha=0.3)
+        plt.xticks(rotation=45, ha='right')
+
+        plt.tight_layout()
+        output_file = output_path / f'segmentation_{metric}_by_celltype.tiff'
+        plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+        plt.close()
+
+        logger.info(f"  Saved {metric_name} box plot to {output_file}")
+
+
+def calculate_cell_count_error_by_celltype(df_gt, df_overlap):
+    """
+    Calculate cell count error: (predicted_count - true_count) / true_count for each cell type.
+    """
+    logger.info("Calculating cell count error by cell type...")
+
+    # Get ground truth counts by cell type
+    gt_counts = df_gt['cell_type'].value_counts().to_dict()
+
+    # Merge overlap data with ground truth to get cell types for matched cells
+    df_merged = df_overlap.merge(df_gt[['cell_id', 'cell_type']], left_on='gt_cell_id', right_on='cell_id', how='left')
+
+    # Count matched (predicted) cells by cell type
+    matched_counts = df_merged[df_merged['nuclear_match']]['cell_type'].value_counts().to_dict()
+
+    # Calculate error for each cell type
+    cell_count_errors = []
+    for cell_type, true_count in gt_counts.items():
+        predicted_count = matched_counts.get(cell_type, 0)
+        error = (predicted_count - true_count) / true_count if true_count > 0 else 0
+
+        cell_count_errors.append({
+            'cell_type': cell_type,
+            'true_count': true_count,
+            'predicted_count': predicted_count,
+            'count_error': error
+        })
+
+    df_count_error = pd.DataFrame(cell_count_errors)
+
+    logger.info(f"  Cell count errors calculated for {len(df_count_error)} cell types")
+
+    return df_count_error
+
+
+def create_cell_count_error_barplot(df_count_error, output_dir):
+    """
+    Create bar plot for cell count errors by cell type in TIFF format.
+    """
+    logger.info("Creating cell count error bar plot...")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Sort by cell type for consistent ordering
+    df_sorted = df_count_error.sort_values('cell_type')
+
+    # Create bar plot
+    colors = ['red' if x < 0 else 'green' for x in df_sorted['count_error']]
+    bars = ax.bar(range(len(df_sorted)), df_sorted['count_error'], color=colors, alpha=0.7)
+
+    ax.set_xticks(range(len(df_sorted)))
+    ax.set_xticklabels(df_sorted['cell_type'], rotation=45, ha='right')
+    ax.set_xlabel('Cell Type', fontsize=12)
+    ax.set_ylabel('Cell Count Error\n(Predicted - True) / True', fontsize=12)
+    ax.set_title('Cell Count Error by Cell Type', fontsize=14, fontweight='bold')
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8)
+    ax.grid(axis='y', alpha=0.3)
+
+    # Add value labels on bars
+    for i, (bar, val) in enumerate(zip(bars, df_sorted['count_error'])):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+                f'{val:.2f}',
+                ha='center', va='bottom' if height >= 0 else 'top',
+                fontsize=9)
+
+    plt.tight_layout()
+    output_file = output_path / 'cell_count_error_by_celltype.tiff'
+    plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    logger.info(f"  Saved cell count error bar plot to {output_file}")
+
+
+def create_gene_correlation_boxplots_by_celltype(df_corr, df_gt, output_dir):
+    """
+    Create box plots for gene correlation metrics (Pearson, Spearman) by cell type.
+    Each dot represents one cell, showing distribution per cell type.
+    """
+    logger.info("Creating gene correlation box plots by cell type...")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    # Merge with ground truth to get cell types
+    df_merged = df_corr.merge(df_gt[['cell_id', 'cell_type']], left_on='gt_cell_id', right_on='cell_id', how='left')
+
+    # Remove NaN cell types
+    df_merged = df_merged[df_merged['cell_type'].notna()].copy()
+
+    if len(df_merged) == 0:
+        logger.warning("  No cells with valid cell types found, skipping correlation box plots")
+        return
+
+    # Metrics to plot
+    metrics = ['pearson_corr', 'spearman_corr']
+    metric_names = ['Pearson Correlation', 'Spearman Correlation']
+
+    for metric, metric_name in zip(metrics, metric_names):
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        # Prepare data for box plot (sorted cell types)
+        cell_types = sorted(df_merged['cell_type'].unique())
+        data_to_plot = [df_merged[df_merged['cell_type'] == ct][metric].values for ct in cell_types]
+
+        # Create box plot
+        bp = ax.boxplot(data_to_plot, labels=cell_types, patch_artist=True)
+
+        # Color the boxes
+        colors = plt.cm.Set3(range(len(cell_types)))
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+
+        ax.set_xlabel('Cell Type', fontsize=12)
+        ax.set_ylabel(metric_name, fontsize=12)
+        ax.set_title(f'{metric_name} Distribution by Cell Type', fontsize=14, fontweight='bold')
+        ax.grid(axis='y', alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+        plt.xticks(rotation=45, ha='right')
+
+        plt.tight_layout()
+        output_file = output_path / f'gene_correlation_{metric}_by_celltype.tiff'
+        plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+        plt.close()
+
+        logger.info(f"  Saved {metric_name} box plot to {output_file}")
+
+
+def create_gene_correlation_scatterplots(df_corr, df_gt, adata_sc_gt, adata_smurf, output_dir):
+    """
+    Create scatter plots for gene expression correlations:
+    1. Best and worst correlations by cell type
+    2. Overall correlation scatter plot
+    All in TIFF format.
+    """
+    logger.info("Creating gene correlation scatter plots...")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    # Merge with ground truth to get cell types
+    df_merged = df_corr.merge(df_gt[['cell_id', 'cell_type']], left_on='gt_cell_id', right_on='cell_id', how='left')
+
+    # Remove NaN cell types
+    df_merged = df_merged[df_merged['cell_type'].notna()].copy()
+
+    # Get common genes
+    common_genes = list(set(adata_sc_gt.var_names) & set(adata_smurf.var_names))
+
+    # For each cell type, find best and worst cells
+    cell_types = sorted(df_merged['cell_type'].unique())
+
+    for cell_type in cell_types:
+        df_celltype = df_merged[df_merged['cell_type'] == cell_type]
+
+        if len(df_celltype) < 2:
+            logger.warning(f"  Skipping {cell_type}: too few cells ({len(df_celltype)})")
+            continue
+
+        # Find best and worst
+        best_cell = df_celltype.loc[df_celltype['pearson_corr'].idxmax()]
+        worst_cell = df_celltype.loc[df_celltype['pearson_corr'].idxmin()]
+
+        # Create figure with 2 subplots (best and worst)
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+        for idx, (cell, title_suffix) in enumerate([(best_cell, 'Best'), (worst_cell, 'Worst')]):
+            # Get expression data
+            gt_expr = adata_sc_gt[cell['sc_barcode'], common_genes].X.toarray().flatten()
+            smurf_key = f"{int(cell['smurf_cell_id'])}.0"
+            smurf_expr = adata_smurf[smurf_key, common_genes].X.toarray().flatten()
+
+            # Scatter plot
+            axes[idx].scatter(gt_expr, smurf_expr, alpha=0.5, s=10)
+            axes[idx].plot([gt_expr.min(), gt_expr.max()],
+                          [gt_expr.min(), gt_expr.max()],
+                          'r--', alpha=0.5, label='Perfect correlation')
+
+            axes[idx].set_xlabel('Ground Truth Expression', fontsize=11)
+            axes[idx].set_ylabel('SMURF Expression', fontsize=11)
+            axes[idx].set_title(f'{title_suffix} Correlation - {cell_type}\n' +
+                               f'Pearson: {cell["pearson_corr"]:.3f}, ' +
+                               f'Spearman: {cell["spearman_corr"]:.3f}, ' +
+                               f'RMSE: {cell["rmse"]:.3f}',
+                               fontsize=10, fontweight='bold')
+            axes[idx].legend()
+            axes[idx].grid(alpha=0.3)
+
+        plt.tight_layout()
+        output_file = output_path / f'gene_correlation_{cell_type.replace("/", "_")}_best_worst.tiff'
+        plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+        plt.close()
+
+        logger.info(f"  Saved {cell_type} best/worst scatter plot to {output_file}")
+
+    # Overall scatter plot
+    logger.info("  Creating overall gene correlation scatter plot...")
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    # Color by cell type
+    for cell_type in cell_types:
+        df_ct = df_merged[df_merged['cell_type'] == cell_type]
+        ax.scatter(df_ct['pearson_corr'], df_ct['spearman_corr'],
+                  alpha=0.6, s=20, label=cell_type)
+
+    ax.plot([-1, 1], [-1, 1], 'k--', alpha=0.5, linewidth=1)
+    ax.set_xlabel('Pearson Correlation', fontsize=12)
+    ax.set_ylabel('Spearman Correlation', fontsize=12)
+    ax.set_title('Gene Expression Correlation\n(Pearson vs Spearman by Cell Type)',
+                fontsize=14, fontweight='bold')
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(alpha=0.3)
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 1)
+
+    plt.tight_layout()
+    output_file = output_path / 'gene_correlation_overall.tiff'
+    plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    logger.info(f"  Saved overall correlation scatter plot to {output_file}")
+
+
+def generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_smurf, output_dir):
+    """
+    Generate comprehensive validation report with TIFF visualizations.
     """
     logger.info("Generating validation report...")
 
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
-    # Create figure with multiple subplots
-    fig = plt.figure(figsize=(20, 12))
-
-    # 1. Spatial overlap distribution
-    ax1 = plt.subplot(2, 3, 1)
-    df_overlap['overlap_percent'].hist(bins=50, ax=ax1, edgecolor='black')
-    ax1.set_xlabel('Overlap Percentage (IoU)')
-    ax1.set_ylabel('Number of Cells')
-    ax1.set_title(f'Spatial Overlap Distribution\nMean: {df_overlap["overlap_percent"].mean():.2f}%')
-    ax1.axvline(df_overlap['overlap_percent'].mean(), color='red', linestyle='--', label='Mean')
-    ax1.legend()
-
-    # 2. Precision vs Recall
-    ax2 = plt.subplot(2, 3, 2)
-    ax2.scatter(df_overlap['recall'], df_overlap['precision'], alpha=0.5, s=20)
-    ax2.set_xlabel('Recall (%)')
-    ax2.set_ylabel('Precision (%)')
-    ax2.set_title('Precision vs Recall (Spatial)')
-    ax2.plot([0, 100], [0, 100], 'r--', alpha=0.5, label='Perfect match')
-    ax2.legend()
-
-    # 3. Gene correlation distribution
-    if len(df_corr) > 0:
-        ax3 = plt.subplot(2, 3, 3)
-        df_corr['pearson_corr'].hist(bins=50, ax=ax3, edgecolor='black')
-        ax3.set_xlabel('Pearson Correlation')
-        ax3.set_ylabel('Number of Cells')
-        ax3.set_title(f'Gene Expression Correlation\nMean: {df_corr["pearson_corr"].mean():.3f}')
-        ax3.axvline(df_corr['pearson_corr'].mean(), color='red', linestyle='--', label='Mean')
-        ax3.legend()
-
-        # 4. Correlation scatter
-        ax4 = plt.subplot(2, 3, 4)
-        ax4.scatter(df_corr['pearson_corr'], df_corr['spearman_corr'], alpha=0.5, s=20)
-        ax4.set_xlabel('Pearson Correlation')
-        ax4.set_ylabel('Spearman Correlation')
-        ax4.set_title('Pearson vs Spearman Correlation')
-        ax4.plot([-1, 1], [-1, 1], 'r--', alpha=0.5)
-
-        # 5. Overlap vs Correlation
-        df_merged = df_overlap.merge(df_corr[['gt_cell_id', 'pearson_corr']], on='gt_cell_id', how='inner')
-        ax5 = plt.subplot(2, 3, 5)
-        ax5.scatter(df_merged['overlap_percent'], df_merged['pearson_corr'], alpha=0.5, s=20)
-        ax5.set_xlabel('Spatial Overlap (%)')
-        ax5.set_ylabel('Pearson Correlation')
-        ax5.set_title('Spatial Overlap vs Gene Correlation')
-
-    # 6. Summary statistics
-    ax6 = plt.subplot(2, 3, 6)
-    ax6.axis('off')
-
+    # Merge overlap with ground truth for cell type info
     matched_cells = df_overlap[df_overlap['nuclear_match']]
 
+    # Calculate summary statistics
     match_rate = df_overlap['nuclear_match'].sum() / len(df_overlap) * 100
-    mean_iou = matched_cells['overlap_percent'].mean()
-    median_iou = matched_cells['overlap_percent'].median()
+    mean_iou = matched_cells['iou'].mean()
+    median_iou = matched_cells['iou'].median()
+    mean_f1 = matched_cells['f1_score'].mean()
     mean_precision = matched_cells['precision'].mean()
     mean_recall = matched_cells['recall'].mean()
 
-    # Format correlation stats (can't use format specifiers inside ternary in f-strings)
+    # Format correlation stats
     mean_pearson = f"{df_corr['pearson_corr'].mean():.3f}" if len(df_corr) > 0 else 'N/A'
     mean_spearman = f"{df_corr['spearman_corr'].mean():.3f}" if len(df_corr) > 0 else 'N/A'
+    mean_rmse = f"{df_corr['rmse'].mean():.3f}" if len(df_corr) > 0 else 'N/A'
     high_corr = (df_corr['pearson_corr'] > 0.5).sum() if len(df_corr) > 0 else 'N/A'
     very_high_corr = (df_corr['pearson_corr'] > 0.7).sum() if len(df_corr) > 0 else 'N/A'
+
+    # Count total cells
+    total_gt_cells = len(df_overlap)
+    total_matched_cells = matched_cells['smurf_cell_id'].nunique()
+    cell_count_error = (total_matched_cells - total_gt_cells) / total_gt_cells if total_gt_cells > 0 else 0
 
     summary_text = f"""
 SMURF Validation Summary
 ========================
 
+Cell Counting Metrics:
+  - Total GT cells: {total_gt_cells}
+  - Total SMURF cells (matched): {total_matched_cells}
+  - Cell count error: {cell_count_error:.3f} ({cell_count_error*100:.1f}%)
+
 Cell Matching (Nuclear-based):
-  - Total GT cells: {len(df_overlap)}
-  - Cells matched by nucleus: {df_overlap['nuclear_match'].sum()}
   - Match rate: {match_rate:.1f}%
 
-Whole Cell Spatial Overlap:
+Whole Cell Spatial Overlap (Per-Cell Metrics):
   (Only for nucleus-matched cells)
-  - Mean IoU: {mean_iou:.2f}%
-  - Median IoU: {median_iou:.2f}%
-  - Mean precision: {mean_precision:.2f}%
-  - Mean recall: {mean_recall:.2f}%
+  - Mean IoU: {mean_iou*100:.2f}%
+  - Median IoU: {median_iou*100:.2f}%
+  - Mean precision: {mean_precision*100:.2f}%
+  - Mean recall: {mean_recall*100:.2f}%
+  - Mean F1 score: {mean_f1:.3f}
 
-Gene Expression Correlation:
+Cell Size Metrics:
+  - Mean GT cell size: {matched_cells['gt_cell_bins'].mean():.1f} bins
+  - Mean SMURF cell size: {matched_cells['smurf_cell_bins'].mean():.1f} bins
+  - Mean cell size error: {(matched_cells['smurf_cell_bins'] / matched_cells['gt_cell_bins']).mean():.3f}
+
+Gene Expression Correlation (Per-Cell Metrics):
   - Cell pairs analyzed: {len(df_corr)}
   - Mean Pearson: {mean_pearson}
   - Mean Spearman: {mean_spearman}
+  - Mean RMSE: {mean_rmse}
   - High corr (>0.5): {high_corr}
   - Very high (>0.7): {very_high_corr}
     """
 
-    ax6.text(0.1, 0.5, summary_text, fontfamily='monospace', fontsize=10, verticalalignment='center')
-
-    plt.tight_layout()
-    plt.savefig(output_path / 'smurf_validation_summary.png', dpi=300, bbox_inches='tight')
-    logger.info(f"  Saved validation summary plot to {output_path / 'smurf_validation_summary.png'}")
+    logger.info(summary_text)
 
     # Save detailed results
     df_overlap.to_csv(output_path / 'spatial_overlap_results.csv', index=False)
@@ -935,6 +1196,26 @@ Gene Expression Correlation:
     with open(output_path / 'validation_summary.txt', 'w') as f:
         f.write(summary_text)
     logger.info(f"  Saved summary statistics to {output_path / 'validation_summary.txt'}")
+
+    # Create visualizations
+    logger.info("Creating comprehensive visualizations...")
+
+    # 1. Segmentation box plots by cell type
+    create_segmentation_boxplots_by_celltype(df_overlap, df_gt, output_path)
+
+    # 2. Cell count error analysis
+    df_count_error = calculate_cell_count_error_by_celltype(df_gt, df_overlap)
+    df_count_error.to_csv(output_path / 'cell_count_error_by_celltype.csv', index=False)
+    logger.info(f"  Saved cell count error data to {output_path / 'cell_count_error_by_celltype.csv'}")
+    create_cell_count_error_barplot(df_count_error, output_path)
+
+    # 3. Gene correlation box plots
+    if len(df_corr) > 0:
+        create_gene_correlation_boxplots_by_celltype(df_corr, df_gt, output_path)
+
+    # 4. Gene correlation scatter plots
+    if len(df_corr) > 0:
+        create_gene_correlation_scatterplots(df_corr, df_gt, adata_sc_gt, adata_smurf, output_path)
 
 
 def main():
@@ -1021,12 +1302,13 @@ def main():
         logger.warning("="*80)
 
     # Step 8: Generate validation report
-    generate_validation_report(df_overlap, df_corr, output_dir)
+    generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_smurf, output_dir)
 
     # Step 9: Save annotated SMURF data
     logger.info("Saving annotated SMURF data...")
-    # Convert gt_cell_id to string to avoid h5py serialization errors
+    # Convert gt_cell_id and gt_barcode to string to avoid h5py serialization errors
     adata_smurf_annotated.obs['gt_cell_id'] = adata_smurf_annotated.obs['gt_cell_id'].astype(str)
+    adata_smurf_annotated.obs['gt_barcode'] = adata_smurf_annotated.obs['gt_barcode'].astype(str)
     adata_smurf_annotated.write(output_dir / 'adata_smurf_annotated.h5ad')
     annotation_df.to_csv(output_dir / 'smurf_cell_annotations.csv', index=False)
     match_df.to_csv(output_dir / 'nuclear_bin_matches.csv', index=False)

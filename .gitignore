@@ -33,6 +33,11 @@ bin2cell_results_colorectal/
 bin2cell_validation_output/
 kidney_pseudo_visium_hd_output_full/
 kidney_smurf_result/
+smurf_kidney_validation_output/
+kidney_smurf_result_original/
+colorectal_smurf_result/
+colorectal_pseudo_visium_hd_output_full/
+bin2cell_results_kidney/
 
 # Large data files
 *.png
