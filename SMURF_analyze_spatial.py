@@ -242,6 +242,10 @@ def main():
     parser.add_argument('--microns_per_pixel', type=float,
                        default=0.2739038899725172,
                        help='Microns per pixel conversion factor')
+    parser.add_argument('--skip_normalize_sc', action='store_true',
+                       help='Skip scanpy normalize_total inside SMURF singlecellanalysis (use if input already normalized)')
+    parser.add_argument('--skip_log1p_sc', action='store_true',
+                       help='Skip scanpy log1p inside SMURF singlecellanalysis (use if input already log-transformed)')
     args = parser.parse_args()
 
     save_path = args.output_dir
@@ -340,7 +344,12 @@ def main():
 
     # Initial single cell analysis
     print("Performing initial single cell analysis...")
-    adata_sc = su.singlecellanalysis(adata_sc, resolution=0.5)
+    adata_sc = su.singlecellanalysis(
+        adata_sc,
+        resolution=0.5,
+        skip_normalize=args.skip_normalize_sc,
+        skip_log1p=args.skip_log1p_sc
+    )
 
     # Iterative arrangement (this is time-consuming)
     print("Starting iterative arrangement (this may take a while)...")
