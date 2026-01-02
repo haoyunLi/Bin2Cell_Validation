@@ -166,19 +166,6 @@ current kidney/colorectal examples—update them to match your dataset.
    conda deactivate
    ```
 
-    For the SMURF run with log-transformed input, use the new flags to skip the internal scanpy normalization/log1p:
-
-    ```bash
-    python SMURF_analyze_spatial.py \
-        --tissue_positions Human_Colorectal/output/binned_outputs/square_002um/spatial/tissue_positions.parquet \
-        --tissue_image Human_Colorectal/input/Visium_HD_Human_Colon_Cancer_tissue_image.btf \
-        --pseudo_hd_dir colorectal_pseudo_visium_hd_output_full \
-        --output_dir colorectal_smurf_result \
-        --microns_per_pixel 0.2737012522439323 \
-        --skip_normalize_sc \
-        --skip_log1p_sc
-    ```
-
 9. **Validate SMURF output** (nuclear overlap, whole-cell IoU, gene correlation):
 
    ```bash

@@ -348,39 +348,12 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_bin2cell, df_overlap):
     """
     Calculate gene expression correlation between ground truth and Bin2Cell for matched cells.
 
-    IMPORTANT NOTE ON DATA NORMALIZATION:
-    - Ground truth data is expected to be normalized (log-transformed or similar)
-    - Bin2Cell data should ideally use the same normalization as ground truth
-    - If Bin2Cell uses different normalization (e.g., wider dynamic range),
-      correlations may not be directly comparable to other methods (e.g., SMURF)
-    - For fair comparison, ensure all methods use identical normalization
     """
     logger.info("\nCalculating gene expression correlation...")
 
     # Find common genes
     common_genes = list(set(adata_sc_gt.var_names) & set(adata_bin2cell.var_names))
     logger.info(f"  Common genes: {len(common_genes)}")
-
-    # Detect and normalize data scale differences automatically
-    if adata_sc_gt.n_obs > 0 and adata_bin2cell.n_obs > 0:
-        gt_sample_max = adata_sc_gt[0, :].X.toarray().max()
-        bin2cell_sample_max = adata_bin2cell[0, :].X.toarray().max()
-
-        if bin2cell_sample_max > gt_sample_max * 5:
-            logger.warning(f"  ⚠️  Different data scales detected:")
-            logger.warning(f"      Ground truth max ≈ {gt_sample_max:.1f}")
-            logger.warning(f"      Bin2Cell max ≈ {bin2cell_sample_max:.1f}")
-            logger.warning(f"  ")
-            logger.warning(f"  Applying log1p normalization to Bin2Cell data to match GT scale...")
-
-            # Apply log1p to Bin2Cell data IN-PLACE for this analysis
-            import scanpy as sc
-            adata_bin2cell = adata_bin2cell.copy()  # Don't modify original
-            sc.pp.log1p(adata_bin2cell)
-
-            bin2cell_new_max = adata_bin2cell[0, :].X.toarray().max()
-            logger.warning(f"  After normalization: Bin2Cell max ≈ {bin2cell_new_max:.1f}")
-            logger.warning(f"  ✓ Data scales now compatible for correlation analysis")
 
     if len(common_genes) < 10:
         logger.warning("  Not enough common genes for correlation!")
