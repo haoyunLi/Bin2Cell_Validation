@@ -121,19 +121,19 @@ def load_single_cell_data(sc_h5_path, sc_metadata_path):
     for col in metadata.columns:
         adata.obs[col] = metadata.loc[adata.obs.index, col]
 
-    # Use specific cell type column directly
-    main_cell_type_col = 'Celltype (major-lineage)'
+    # Use cell type column from config
+    from config_pseudo_hd import SC_CELL_TYPE_COLUMN
 
-    if main_cell_type_col in adata.obs.columns:
-        adata.obs['cell_type'] = adata.obs[main_cell_type_col]
-        logger.info(f"  Using '{main_cell_type_col}' as cell_type column")
+    if SC_CELL_TYPE_COLUMN in adata.obs.columns:
+        adata.obs['cell_type'] = adata.obs[SC_CELL_TYPE_COLUMN]
+        logger.info(f"  Using '{SC_CELL_TYPE_COLUMN}' as cell_type column")
         logger.info(f"  Cell types found:")
         for ct, count in adata.obs['cell_type'].value_counts().items():
             logger.info(f"    {ct}: {count} cells")
     else:
-        logger.error(f"  ERROR: Column '{main_cell_type_col}' not found in metadata!")
+        logger.error(f"  ERROR: Column '{SC_CELL_TYPE_COLUMN}' not found in metadata!")
         logger.info(f"  Available columns: {list(adata.obs.columns)}")
-        raise ValueError(f"Column '{main_cell_type_col}' not found in metadata. Please check the column name.")
+        raise ValueError(f"Column '{SC_CELL_TYPE_COLUMN}' not found in metadata. Please check the column name.")
 
     return adata
 

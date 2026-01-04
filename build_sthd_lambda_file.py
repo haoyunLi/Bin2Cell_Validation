@@ -85,11 +85,15 @@ def load_sc_data(h5_file, metadata_file, celltype_column):
     if celltype_column not in df_meta.columns:
         raise ValueError(f"Column '{celltype_column}' not found in metadata. Available: {list(df_meta.columns)}")
 
-    # Set index to Cell barcode
-    if 'Cell' not in df_meta.columns:
-        raise ValueError("Metadata must have a 'Cell' column with cell barcodes")
+    # Set index to cell barcode (check both 'Cell' and 'cell')
+    if 'Cell' in df_meta.columns:
+        barcode_col = 'Cell'
+    elif 'cell' in df_meta.columns:
+        barcode_col = 'cell'
+    else:
+        raise ValueError("Metadata must have a 'Cell' or 'cell' column with cell barcodes")
 
-    df_meta.index = df_meta['Cell']
+    df_meta.index = df_meta[barcode_col]
 
     # Get cell type labels
     cell_types = df_meta.loc[:, celltype_column]

@@ -335,16 +335,16 @@ def main():
     adata_sc = copy.deepcopy(so.final_nuclei)
 
     # Filter cells
-    sc.pp.filter_cells(adata_sc, min_counts=500)
+    sc.pp.filter_cells(adata_sc, min_counts=5)
     adata_raw = copy.deepcopy(adata_sc)
 
     # Initial single cell analysis
     print("Performing initial single cell analysis...")
-    adata_sc = su.singlecellanalysis(adata_sc, resolution=0.5)
+    adata_sc = su.singlecellanalysis(adata_sc, resolution=2)
 
     # Iterative arrangement (this is time-consuming)
     print("Starting iterative arrangement (this may take a while)...")
-    su.itering_arragement(adata_sc, adata_raw, adata, so, resolution=0.5,
+    su.itering_arragement(adata_sc, adata_raw, adata, so, resolution=2,
                          save_folder=os.path.abspath(save_path) + '/', show=True, keep_previous=False)
 
     # Load iteration results

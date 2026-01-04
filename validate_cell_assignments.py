@@ -11,6 +11,9 @@ This script validates that the pseudo Visium HD data was generated correctly by:
 Usage:
     python validate_cell_assignments.py \
         --pseudo_hd_dir pseudo_visium_hd_output \
+        --sc_h5_file colorectal_sc_data/CRC_GSE166555_raw_tumor.h5 \
+        --sc_meta_file colorectal_sc_data/GSE166555_meta_data_tumor.tsv \
+        --celltype_column sct_cell_type \
         --sample_size 100
 """
 
@@ -239,8 +242,14 @@ def load_bin_to_cell_mapping(pixel_file, microns_per_pixel=0.2739038899725172):
     return bin_aggregation
 
 
-def load_sc_data(h5_file, metadata_file):
-    """Load single-cell data (custom H5 format) - OPTIMIZED: keeps sparse format."""
+def load_sc_data(h5_file, metadata_file, celltype_column='sct_cell_type'):
+    """Load single-cell data (custom H5 format) - OPTIMIZED: keeps sparse format.
+
+    Args:
+        h5_file: Path to H5 expression file
+        metadata_file: Path to metadata TSV file
+        celltype_column: Name of column containing cell type labels (default: 'sct_cell_type')
+    """
     logger.info(f"Loading single-cell data from {h5_file}...")
 
     import h5py
@@ -271,10 +280,22 @@ def load_sc_data(h5_file, metadata_file):
 
     # Load metadata
     df_meta = pd.read_csv(metadata_file, sep='\t')
-    df_meta.index = df_meta['Cell']
 
-    # Add cell type info
-    adata_sc.obs['cell_type'] = df_meta.loc[adata_sc.obs.index, 'Celltype (major-lineage)']
+    # Handle both 'Cell' and 'cell' column names
+    if 'Cell' in df_meta.columns:
+        df_meta.index = df_meta['Cell']
+    elif 'cell' in df_meta.columns:
+        df_meta.index = df_meta['cell']
+    else:
+        raise ValueError("Metadata must have a 'Cell' or 'cell' column")
+
+    # Add cell type info from specified column
+    if celltype_column not in df_meta.columns:
+        raise ValueError(f"Cell type column '{celltype_column}' not found in metadata. "
+                        f"Available columns: {list(df_meta.columns)}")
+
+    adata_sc.obs['cell_type'] = df_meta.loc[adata_sc.obs.index, celltype_column]
+    logger.info(f"  Using cell type column: '{celltype_column}'")
 
     logger.info(f"  Loaded {adata_sc.n_obs:,} cells, {adata_sc.n_vars} genes")
     logger.info(f"  Matrix is sparse: {type(adata_sc.X)}")
@@ -589,6 +610,9 @@ def main():
     parser.add_argument('--microns_per_pixel', type=float,
                        default=0.2739038899725172,
                        help='Microns per pixel conversion factor')
+    parser.add_argument('--celltype_column', type=str,
+                       default='sct_cell_type',
+                       help='Column name for cell type labels in metadata (default: sct_cell_type)')
 
     args = parser.parse_args()
 
@@ -619,7 +643,7 @@ def main():
     df_gt = sampled_cells  # Already have sampled cells from step 1
     bin_to_cells = load_bin_to_cell_mapping(pixel_file,
                                              microns_per_pixel=args.microns_per_pixel)
-    adata_sc = load_sc_data(sc_h5_file, sc_meta_file)
+    adata_sc = load_sc_data(sc_h5_file, sc_meta_file, celltype_column=args.celltype_column)
 
     # STEP 4: Validate
     df_cell_results = validate_bin_assignments(adata, bin_to_cells, df_gt, adata_sc,

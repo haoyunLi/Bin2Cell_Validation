@@ -13,3 +13,37 @@ Tprolif,75,85
 CD4Tconv,75,85
 CD8T,75,85
 Mast,20,30
+Cycling T,75,85
+Inflammatory Fibroblasts,8,18
+Stem,30,50
+Cycling B,75,85
+TA,30,40
+Cycling Monocytes,30,45
+Enterocyte Progenitors,28,38
+Enterocytes,25,33
+Best4+ Enterocytes,25,33
+Cycling TA,35,45
+Immature Goblet,15,25
+WNT5B+,8,18
+Inflammatory Monocytes,30,45
+DC2,60,80
+MT-hi,20,50
+Immature Enterocytes,28,35
+M cells,25,33
+Goblet,10,20
+CD8+ IL17+,75,85
+DC1,60,80
+Follicular,75,80
+Enteroendocrine,15,25
+Tregs,75,85
+NKs,60,75
+GC,75,80
+CD4+ PD1+,75,85
+CD4+ Activated Fos-hi,75,85
+Tuft,20,30
+CD69- Mast,20,30
+CD8+ IELs,75,85
+CD69+ Mast,20,30
+RSPO3+,8,18
+CD4+ Memory,75,85
+Macrophages,25,40

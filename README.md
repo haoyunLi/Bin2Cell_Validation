@@ -135,7 +135,8 @@ current kidney/colorectal examples—update them to match your dataset.
        --sc_h5_file kidney_sc_data/KIRC_GSE159115_expression.h5 \
        --sc_meta_file kidney_sc_data/KIRC_GSE159115_CellMetainfo_table.tsv \
        --sample_size 100 \
-       --microns_per_pixel 0.2739038899725172
+       --microns_per_pixel 0.2737012522439323 \
+       --celltype_column sct_cell_type
    ```
 
 8. **Run SMURF segmentation + deconvolution over pseudo HD data:**

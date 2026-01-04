@@ -39,6 +39,7 @@ colorectal_smurf_result/
 colorectal_pseudo_visium_hd_output_full/
 bin2cell_results_kidney/
 bin2cell_validation_kidney_output/
+colorectal_validation_results/
 
 # Large data files
 *.png
