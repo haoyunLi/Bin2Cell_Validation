@@ -374,7 +374,7 @@ def main():
     print("Preparing data for deep learning optimization...")
     pct_toml_dic, spots_X_dic, celltypes_dic, cells_X_plus_dic, nonzero_indices_dic, nonzero_indices_toml, \
     cells_before_ml, cells_before_ml_x, groups_combined, spots_id_dic, spots_id_dic_prop = \
-        su.make_preparation(cells_final, so, adatas_final, adata, weights_record, maximum_cells=500)
+        su.make_preparation(cells_final, so, adatas_final, adata, weights_record, maximum_cells=5000)
 
     # Setup CUDA for optimization
     import torch
