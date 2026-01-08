@@ -730,7 +730,25 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
             # Use items() to get both at once (slightly faster)
             kernel_items = list(kernel.items())
             coords = np.array([k for k, v in kernel_items], dtype=np.int32)
-            probs = np.array([v for k, v in kernel_items], dtype=np.float32)
+            probs = np.array([v for k, v in kernel_items], dtype=np.float64)
+
+            # VALIDATION: Ensure probs is valid for multinomial sampling
+            # Check for NaN or negative values
+            if np.any(np.isnan(probs)) or np.any(probs < 0):
+                logger.warning(f"  Invalid probabilities in kernel for cell {cell_id}, skipping compartment")
+                continue
+
+            # Normalize to ensure sum = 1.0 (fixes floating point errors)
+            prob_sum = np.sum(probs)
+            if prob_sum == 0:
+                logger.warning(f"  Empty kernel for cell {cell_id}, skipping compartment")
+                continue
+            probs = probs / prob_sum
+
+            # Final check: ensure all probs are in valid range [0, 1]
+            probs = np.clip(probs, 0.0, 1.0)
+            # Re-normalize after clipping
+            probs = probs / np.sum(probs)
 
             if use_bins:
                 # Kernel already outputs bin coordinates!
