@@ -335,16 +335,16 @@ def main():
     adata_sc = copy.deepcopy(so.final_nuclei)
 
     # Filter cells
-    sc.pp.filter_cells(adata_sc, min_counts=5)
+    sc.pp.filter_cells(adata_sc, min_counts=300)
     adata_raw = copy.deepcopy(adata_sc)
 
     # Initial single cell analysis
     print("Performing initial single cell analysis...")
-    adata_sc = su.singlecellanalysis(adata_sc, resolution=2)
+    adata_sc = su.singlecellanalysis(adata_sc, resolution=0.5)
 
     # Iterative arrangement (this is time-consuming)
     print("Starting iterative arrangement (this may take a while)...")
-    su.itering_arragement(adata_sc, adata_raw, adata, so, resolution=2,
+    su.itering_arragement(adata_sc, adata_raw, adata, so, resolution=0.5,
                          save_folder=os.path.abspath(save_path) + '/', show=True, keep_previous=False)
 
     # Load iteration results
@@ -374,7 +374,7 @@ def main():
     print("Preparing data for deep learning optimization...")
     pct_toml_dic, spots_X_dic, celltypes_dic, cells_X_plus_dic, nonzero_indices_dic, nonzero_indices_toml, \
     cells_before_ml, cells_before_ml_x, groups_combined, spots_id_dic, spots_id_dic_prop = \
-        su.make_preparation(cells_final, so, adatas_final, adata, weights_record, maximum_cells=500)
+        su.make_preparation(cells_final, so, adatas_final, adata, weights_record, maximum_cells=2000)
 
     # Setup CUDA for optimization
     import torch

@@ -15,8 +15,9 @@ VALIDATION STRATEGY:
    - Measures IoU (Intersection over Union) for complete cell regions
 
 3. Gene Correlation: Compares gene expression profiles between matched cells
-   - For each matched cell pair, calculates Pearson and Spearman correlation
+   - For each matched cell pair, calculates Spearman correlation and RMSE
    - Uses ground truth single-cell expression vs Bin2Cell reconstructed expression
+   - Spearman used for both per-cell and gene-wise analysis (rank-based, robust)
 
 Bin2Cell Outputs Used:
 - bin2cell_results/human_colorectal_bin2cell_assignments.csv: Bin-to-cell assignments
@@ -393,20 +394,10 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_bin2cell, df_overlap):
 
         bin2cell_expr = adata_bin2cell[bin2cell_cell_str, :].X[:, common_bin2cell_idx].toarray().flatten()
 
-        # Calculate correlations
+        # Calculate correlations (Spearman only for per-cell, both are raw but different scales)
         if gt_expr.sum() > 0 and bin2cell_expr.sum() > 0 and np.std(gt_expr) > 0 and np.std(bin2cell_expr) > 0:
-            # Pearson correlation
-            pearson_r, pearson_p = pearsonr(gt_expr, bin2cell_expr)
-
             # Spearman correlation
             spearman_r, spearman_p = spearmanr(gt_expr, bin2cell_expr)
-
-            # Non-zero gene correlation
-            nonzero_mask = (gt_expr > 0) | (bin2cell_expr > 0)
-            if nonzero_mask.sum() > 10:
-                pearson_nonzero, _ = pearsonr(gt_expr[nonzero_mask], bin2cell_expr[nonzero_mask])
-            else:
-                pearson_nonzero = np.nan
 
             # Calculate RMSE (Root Mean Squared Error)
             rmse = np.sqrt(np.mean((gt_expr - bin2cell_expr) ** 2))
@@ -416,11 +407,8 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_bin2cell, df_overlap):
                 'bin2cell_cell_id': bin2cell_cell_id,
                 'sc_barcode': sc_barcode,
                 'cell_type': cell_type,
-                'pearson_r': pearson_r,
-                'pearson_p': pearson_p,
                 'spearman_r': spearman_r,
                 'spearman_p': spearman_p,
-                'pearson_nonzero': pearson_nonzero,
                 'rmse': rmse,
                 'gt_total_counts': gt_expr.sum(),
                 'bin2cell_total_counts': bin2cell_expr.sum(),
@@ -433,17 +421,17 @@ def calculate_gene_correlation(df_gt, adata_sc_gt, adata_bin2cell, df_overlap):
     if len(df_corr) > 0:
         logger.info(f"\n  GENE CORRELATION RESULTS:")
         logger.info(f"    Cells with valid correlations: {len(df_corr)}")
-        logger.info(f"    Mean Pearson r: {df_corr['pearson_r'].mean():.3f}")
-        logger.info(f"    Median Pearson r: {df_corr['pearson_r'].median():.3f}")
         logger.info(f"    Mean Spearman r: {df_corr['spearman_r'].mean():.3f}")
-        logger.info(f"    Pearson r > 0.5: {(df_corr['pearson_r'] > 0.5).sum()} ({100*(df_corr['pearson_r'] > 0.5).mean():.1f}%)")
-        logger.info(f"    Pearson r > 0.7: {(df_corr['pearson_r'] > 0.7).sum()} ({100*(df_corr['pearson_r'] > 0.7).mean():.1f}%)")
+        logger.info(f"    Median Spearman r: {df_corr['spearman_r'].median():.3f}")
+        logger.info(f"    Mean RMSE: {df_corr['rmse'].mean():.3f}")
+        logger.info(f"    Spearman r > 0.5: {(df_corr['spearman_r'] > 0.5).sum()} ({100*(df_corr['spearman_r'] > 0.5).mean():.1f}%)")
+        logger.info(f"    Spearman r > 0.7: {(df_corr['spearman_r'] > 0.7).sum()} ({100*(df_corr['spearman_r'] > 0.7).mean():.1f}%)")
 
         # Per cell type
         logger.info(f"\n  Correlation by cell type:")
         for ct in df_corr['cell_type'].unique():
             ct_data = df_corr[df_corr['cell_type'] == ct]
-            logger.info(f"    {ct}: Pearson={ct_data['pearson_r'].mean():.3f}, n={len(ct_data)}")
+            logger.info(f"    {ct}: Spearman={ct_data['spearman_r'].mean():.3f}, n={len(ct_data)}")
 
     return df_corr
 
@@ -627,7 +615,7 @@ def create_cell_count_error_barplot(df_count_error, output_dir):
 
 def create_gene_correlation_boxplots_by_celltype(df_corr, output_dir):
     """
-    Create box plots for gene correlation metrics (Pearson, Spearman) by cell type.
+    Create box plots for gene correlation metrics (Spearman only for per-cell) by cell type.
     Each dot represents one cell, showing distribution per cell type.
     """
     logger.info("Creating gene correlation box plots by cell type...")
@@ -642,38 +630,34 @@ def create_gene_correlation_boxplots_by_celltype(df_corr, output_dir):
         logger.warning("  No cells with valid cell types found, skipping correlation box plots")
         return
 
-    # Metrics to plot
-    metrics = ['pearson_r', 'spearman_r']
-    metric_names = ['Pearson Correlation', 'Spearman Correlation']
+    # Only Spearman for per-cell correlation (both raw counts but different scales)
+    fig, ax = plt.subplots(figsize=(12, 8))
 
-    for metric, metric_name in zip(metrics, metric_names):
-        fig, ax = plt.subplots(figsize=(12, 8))
+    # Prepare data for box plot (sorted cell types)
+    cell_types = sorted(df_merged['cell_type'].unique())
+    data_to_plot = [df_merged[df_merged['cell_type'] == ct]['spearman_r'].values for ct in cell_types]
 
-        # Prepare data for box plot (sorted cell types)
-        cell_types = sorted(df_merged['cell_type'].unique())
-        data_to_plot = [df_merged[df_merged['cell_type'] == ct][metric].values for ct in cell_types]
+    # Create box plot
+    bp = ax.boxplot(data_to_plot, labels=cell_types, patch_artist=True)
 
-        # Create box plot
-        bp = ax.boxplot(data_to_plot, labels=cell_types, patch_artist=True)
+    # Color the boxes
+    colors = plt.cm.Set3(range(len(cell_types)))
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
 
-        # Color the boxes
-        colors = plt.cm.Set3(range(len(cell_types)))
-        for patch, color in zip(bp['boxes'], colors):
-            patch.set_facecolor(color)
+    ax.set_xlabel('Cell Type', fontsize=12)
+    ax.set_ylabel('Spearman Correlation', fontsize=12)
+    ax.set_title('Per-Cell Gene Expression Correlation by Cell Type\n(Spearman - rank-based)', fontsize=14, fontweight='bold')
+    ax.grid(axis='y', alpha=0.3)
+    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+    plt.xticks(rotation=45, ha='right')
 
-        ax.set_xlabel('Cell Type', fontsize=12)
-        ax.set_ylabel(metric_name, fontsize=12)
-        ax.set_title(f'{metric_name} Distribution by Cell Type', fontsize=14, fontweight='bold')
-        ax.grid(axis='y', alpha=0.3)
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
-        plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    output_file = output_path / 'gene_correlation_spearman_r_by_celltype.tiff'
+    plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+    plt.close()
 
-        plt.tight_layout()
-        output_file = output_path / f'gene_correlation_{metric}_by_celltype.tiff'
-        plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
-        plt.close()
-
-        logger.info(f"  Saved {metric_name} box plot to {output_file}")
+    logger.info(f"  Saved Spearman correlation box plot to {output_file}")
 
 
 def create_gene_correlation_scatterplots(df_corr, adata_sc_gt, adata_bin2cell, output_dir):
@@ -704,9 +688,9 @@ def create_gene_correlation_scatterplots(df_corr, adata_sc_gt, adata_bin2cell, o
             logger.warning(f"  Skipping {cell_type}: too few cells ({len(df_celltype)})")
             continue
 
-        # Find best and worst
-        best_cell = df_celltype.loc[df_celltype['pearson_r'].idxmax()]
-        worst_cell = df_celltype.loc[df_celltype['pearson_r'].idxmin()]
+        # Find best and worst based on Spearman (since per-cell uses Spearman only)
+        best_cell = df_celltype.loc[df_celltype['spearman_r'].idxmax()]
+        worst_cell = df_celltype.loc[df_celltype['spearman_r'].idxmin()]
 
         # Create figure with 2 subplots (best and worst)
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
@@ -723,10 +707,9 @@ def create_gene_correlation_scatterplots(df_corr, adata_sc_gt, adata_bin2cell, o
                           [gt_expr.min(), gt_expr.max()],
                           'r--', alpha=0.5, label='Perfect correlation')
 
-            axes[idx].set_xlabel('Ground Truth Expression', fontsize=11)
-            axes[idx].set_ylabel('Bin2Cell Expression', fontsize=11)
+            axes[idx].set_xlabel('Ground Truth Expression (raw counts)', fontsize=11)
+            axes[idx].set_ylabel('Bin2Cell Expression (raw counts)', fontsize=11)
             axes[idx].set_title(f'{title_suffix} Correlation - {cell_type}\n' +
-                               f'Pearson: {cell["pearson_r"]:.3f}, ' +
                                f'Spearman: {cell["spearman_r"]:.3f}, ' +
                                f'RMSE: {cell["rmse"]:.3f}',
                                fontsize=10, fontweight='bold')
@@ -740,33 +723,170 @@ def create_gene_correlation_scatterplots(df_corr, adata_sc_gt, adata_bin2cell, o
 
         logger.info(f"  Saved {cell_type} best/worst scatter plot to {output_file}")
 
-    # Overall scatter plot
-    logger.info("  Creating overall gene correlation scatter plot...")
+    logger.info(f"  Per-cell correlation scatter plots complete (best/worst per cell type)")
 
-    fig, ax = plt.subplots(figsize=(10, 10))
 
-    # Color by cell type
+def calculate_genewise_correlation_by_celltype(df_corr, adata_sc_gt, adata_bin2cell):
+    """
+    Calculate gene-wise correlation across all cells within each cell type.
+    For each gene, calculate its correlation (across cells) within each cell type.
+
+    IMPORTANT: Normalizes BOTH ground truth and Bin2Cell data for fair comparison.
+    Both datasets contain raw counts, so normalization is required.
+
+    Returns:
+        df_genewise: DataFrame with columns:
+            - gene: gene name
+            - cell_type: cell type
+            - spearman_corr: correlation coefficient for this gene across all cells of this type
+            - spearman_pval: p-value for the correlation
+    """
+    logger.info("\nCalculating gene-wise correlations by cell type...")
+
+    # Remove NaN cell types
+    df_corr_valid = df_corr[df_corr['cell_type'].notna()].copy()
+
+    if len(df_corr_valid) == 0:
+        logger.warning("  No cells with valid cell types found, skipping gene-wise correlation")
+        return pd.DataFrame()
+
+    # Normalize BOTH datasets (both are raw counts)
+    logger.info("  Normalizing data for gene-wise correlation...")
+    logger.info("    Applying: log1p(CPM normalization) to both GT and Bin2Cell")
+
+    adata_sc_gt_norm = adata_sc_gt.copy()
+    sc.pp.normalize_total(adata_sc_gt_norm, target_sum=1e6)
+    sc.pp.log1p(adata_sc_gt_norm)
+
+    adata_bin2cell_norm = adata_bin2cell.copy()
+    sc.pp.normalize_total(adata_bin2cell_norm, target_sum=1e6)
+    sc.pp.log1p(adata_bin2cell_norm)
+
+    logger.info("    Both datasets normalized")
+
+    # Get common genes
+    common_genes = list(set(adata_sc_gt_norm.var_names) & set(adata_bin2cell_norm.var_names))
+    logger.info(f"  Analyzing {len(common_genes)} common genes")
+
+    results = []
+    cell_types = sorted(df_corr_valid['cell_type'].unique())
+
     for cell_type in cell_types:
-        df_ct = df_merged[df_merged['cell_type'] == cell_type]
-        ax.scatter(df_ct['pearson_r'], df_ct['spearman_r'],
-                  alpha=0.6, s=20, label=cell_type)
+        df_celltype = df_corr_valid[df_corr_valid['cell_type'] == cell_type]
 
-    ax.plot([-1, 1], [-1, 1], 'k--', alpha=0.5, linewidth=1)
-    ax.set_xlabel('Pearson Correlation', fontsize=12)
-    ax.set_ylabel('Spearman Correlation', fontsize=12)
-    ax.set_title('Gene Expression Correlation\n(Pearson vs Spearman by Cell Type)',
-                fontsize=14, fontweight='bold')
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(alpha=0.3)
-    ax.set_xlim(-1, 1)
-    ax.set_ylim(-1, 1)
+        if len(df_celltype) < 3:
+            logger.warning(f"  Skipping {cell_type}: too few cells ({len(df_celltype)})")
+            continue
 
-    plt.tight_layout()
-    output_file = output_path / 'gene_correlation_overall.tiff'
-    plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
-    plt.close()
+        logger.info(f"  Processing {cell_type} with {len(df_celltype)} cells...")
 
-    logger.info(f"  Saved overall correlation scatter plot to {output_file}")
+        # Get all GT and Bin2Cell cell identifiers for this cell type
+        gt_barcodes = df_celltype['sc_barcode'].tolist()
+        bin2cell_cell_keys = [str(int(cid)) for cid in df_celltype['bin2cell_cell_id'].tolist()]
+
+        # Filter to valid cells that exist in both datasets
+        valid_indices = []
+        for i, (gt_bc, b2c_key) in enumerate(zip(gt_barcodes, bin2cell_cell_keys)):
+            if gt_bc in adata_sc_gt_norm.obs_names and b2c_key in adata_bin2cell_norm.obs_names:
+                valid_indices.append(i)
+
+        if len(valid_indices) < 3:
+            logger.warning(f"  Skipping {cell_type}: too few valid cells after filtering ({len(valid_indices)})")
+            continue
+
+        gt_barcodes_valid = [gt_barcodes[i] for i in valid_indices]
+        b2c_keys_valid = [bin2cell_cell_keys[i] for i in valid_indices]
+
+        # Extract expression matrices for all cells in this cell type (genes x cells)
+        # Ensure same gene order - using NORMALIZED data
+        gt_expr_matrix = adata_sc_gt_norm[gt_barcodes_valid, common_genes].X.toarray().T  # genes x cells
+        b2c_expr_matrix = adata_bin2cell_norm[b2c_keys_valid, common_genes].X.toarray().T  # genes x cells
+
+        logger.info(f"    Expression matrices: {gt_expr_matrix.shape[0]} genes x {gt_expr_matrix.shape[1]} cells")
+
+        # Calculate correlation for each gene across all cells in this cell type
+        gene_count = 0
+        for gene_idx, gene_name in enumerate(common_genes):
+            gt_gene_expr = gt_expr_matrix[gene_idx, :]
+            b2c_gene_expr = b2c_expr_matrix[gene_idx, :]
+
+            # Only calculate if both have variance
+            if np.std(gt_gene_expr) > 0 and np.std(b2c_gene_expr) > 0:
+                spearman_corr, spearman_pval = spearmanr(gt_gene_expr, b2c_gene_expr)
+
+                results.append({
+                    'gene': gene_name,
+                    'cell_type': cell_type,
+                    'spearman_corr': spearman_corr,
+                    'spearman_pval': spearman_pval,
+                    'n_cells': len(valid_indices)
+                })
+                gene_count += 1
+
+            if (gene_idx + 1) % 5000 == 0:
+                logger.info(f"      Processed {gene_idx + 1}/{len(common_genes)} genes...")
+
+        logger.info(f"    Calculated correlations for {gene_count} genes in {cell_type}")
+
+    df_genewise = pd.DataFrame(results)
+
+    logger.info(f"  Completed gene-wise correlation analysis")
+    logger.info(f"  Total gene-celltype pairs analyzed: {len(df_genewise)}")
+
+    if len(df_genewise) > 0:
+        logger.info(f"  Average gene-wise Spearman correlation: {df_genewise['spearman_corr'].mean():.3f}")
+
+    return df_genewise
+
+
+def create_genewise_correlation_boxplots_by_celltype(df_genewise, output_dir):
+    """
+    Create box plots for gene-wise correlations by cell type.
+    Each box represents the distribution of correlation values for all genes within that cell type.
+    Each dot represents one gene's correlation across all cells in that cell type.
+    """
+    logger.info("  Creating gene-wise correlation box plots by cell type...")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    if len(df_genewise) == 0:
+        logger.warning("    No gene-wise correlation data available, skipping box plots")
+        return
+
+    # Metrics to plot (Spearman only)
+    metrics = ['spearman_corr']
+    metric_names = ['Spearman Correlation']
+
+    for metric, metric_name in zip(metrics, metric_names):
+        fig, ax = plt.subplots(figsize=(12, 8))
+
+        # Prepare data for box plot (sorted cell types)
+        cell_types = sorted(df_genewise['cell_type'].unique())
+        data_to_plot = [df_genewise[df_genewise['cell_type'] == ct][metric].values for ct in cell_types]
+
+        # Create box plot
+        bp = ax.boxplot(data_to_plot, labels=cell_types, patch_artist=True)
+
+        # Color the boxes
+        colors = plt.cm.Set3(range(len(cell_types)))
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+
+        ax.set_xlabel('Cell Type', fontsize=12)
+        ax.set_ylabel(f'Gene-wise {metric_name}', fontsize=12)
+        ax.set_title(f'Gene-wise {metric_name} Distribution by Cell Type\n(Each gene\'s correlation across cells within cell type)',
+                    fontsize=14, fontweight='bold')
+        ax.grid(axis='y', alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+        plt.xticks(rotation=45, ha='right')
+
+        plt.tight_layout()
+        output_file = output_path / f'genewise_correlation_{metric}_by_celltype.tiff'
+        plt.savefig(output_file, format='tiff', dpi=300, bbox_inches='tight')
+        plt.close()
+
+        logger.info(f"    Saved gene-wise {metric_name} box plot to {output_file}")
 
 
 def generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_bin2cell, output_dir):
@@ -803,13 +923,21 @@ def generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_bi
         df_count_error.to_csv(output_path / 'cell_count_error_by_celltype.csv', index=False)
         logger.info(f"    Saved cell count error: {output_path / 'cell_count_error_by_celltype.csv'}")
 
-    # 3. Gene correlation box plots (Pearson, Spearman) by cell type
+    # 3. Gene correlation box plots (Spearman only) by cell type
     if len(df_corr) > 0:
         create_gene_correlation_boxplots_by_celltype(df_corr, output_dir)
 
     # 4. Gene correlation scatter plots (best/worst per cell type + overall)
     if len(df_corr) > 0:
         create_gene_correlation_scatterplots(df_corr, adata_sc_gt, adata_bin2cell, output_dir)
+
+    # 5. Gene-wise correlation analysis (each gene's correlation across cells within cell type)
+    if len(df_corr) > 0:
+        df_genewise = calculate_genewise_correlation_by_celltype(df_corr, adata_sc_gt, adata_bin2cell)
+        if len(df_genewise) > 0:
+            df_genewise.to_csv(output_path / 'genewise_correlation_by_celltype.csv', index=False)
+            logger.info(f"    Saved gene-wise correlation data to {output_path / 'genewise_correlation_by_celltype.csv'}")
+            create_genewise_correlation_boxplots_by_celltype(df_genewise, output_dir)
 
     # Save comprehensive text summary
     logger.info("  Writing text summary...")
@@ -865,20 +993,18 @@ def generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_bi
             df_corr_valid = df_corr[df_corr['cell_type'].notna()].copy()
 
             f.write(f"  Cells with valid correlations: {len(df_corr_valid)}\n")
-            f.write(f"  Mean Pearson r: {df_corr_valid['pearson_r'].mean():.3f} ± {df_corr_valid['pearson_r'].std():.3f}\n")
-            f.write(f"  Median Pearson r: {df_corr_valid['pearson_r'].median():.3f}\n")
             f.write(f"  Mean Spearman r: {df_corr_valid['spearman_r'].mean():.3f} ± {df_corr_valid['spearman_r'].std():.3f}\n")
+            f.write(f"  Median Spearman r: {df_corr_valid['spearman_r'].median():.3f}\n")
             f.write(f"  Mean RMSE: {df_corr_valid['rmse'].mean():.3f} ± {df_corr_valid['rmse'].std():.3f}\n")
-            f.write(f"  Pearson r > 0.5: {(df_corr_valid['pearson_r'] > 0.5).sum()} ({100*(df_corr_valid['pearson_r'] > 0.5).mean():.1f}%)\n")
-            f.write(f"  Pearson r > 0.7: {(df_corr_valid['pearson_r'] > 0.7).sum()} ({100*(df_corr_valid['pearson_r'] > 0.7).mean():.1f}%)\n\n")
+            f.write(f"  Spearman r > 0.5: {(df_corr_valid['spearman_r'] > 0.5).sum()} ({100*(df_corr_valid['spearman_r'] > 0.5).sum()/len(df_corr_valid):.1f}%)\n")
+            f.write(f"  Spearman r > 0.7: {(df_corr_valid['spearman_r'] > 0.7).sum()} ({100*(df_corr_valid['spearman_r'] > 0.7).sum()/len(df_corr_valid):.1f}%)\n\n")
 
             # Per cell type correlation metrics
             f.write("  Gene correlation by cell type:\n")
             for cell_type in sorted(df_corr_valid['cell_type'].unique()):
                 ct_data = df_corr_valid[df_corr_valid['cell_type'] == cell_type]
                 f.write(f"    {cell_type}:\n")
-                f.write(f"      n={len(ct_data)}, Pearson={ct_data['pearson_r'].mean():.3f}, ")
-                f.write(f"Spearman={ct_data['spearman_r'].mean():.3f}, ")
+                f.write(f"      n={len(ct_data)}, Spearman={ct_data['spearman_r'].mean():.3f}, ")
                 f.write(f"RMSE={ct_data['rmse'].mean():.3f}\n")
         f.write("\n")
 
@@ -889,10 +1015,9 @@ def generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_bi
         f.write("  - segmentation_precision_by_celltype.tiff\n")
         f.write("  - segmentation_recall_by_celltype.tiff\n")
         f.write("  - cell_count_error_by_celltype.tiff\n")
-        f.write("  - gene_correlation_pearson_r_by_celltype.tiff\n")
         f.write("  - gene_correlation_spearman_r_by_celltype.tiff\n")
-        f.write("  - gene_correlation_overall.tiff\n")
         f.write("  - gene_correlation_<celltype>_best_worst.tiff (per cell type)\n")
+        f.write("  - genewise_correlation_spearman_by_celltype.tiff\n")
         f.write("  - segmentation_overlay_full_resolution.png\n")
         f.write("  - segmentation_overlay_nuclei_only.png\n")
         f.write("="*80 + "\n")
