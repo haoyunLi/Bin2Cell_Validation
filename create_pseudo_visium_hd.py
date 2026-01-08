@@ -29,6 +29,7 @@ from scipy.sparse import coo_matrix  # For fast sparse matrix aggregation
 import gzip
 import gc  # For garbage collection
 from collections import defaultdict  # For faster dictionary aggregation
+from multiprocessing import Pool, cpu_count
 
 # Load configuration globally so helper functions can access it
 import config_pseudo_hd as config
@@ -433,6 +434,55 @@ def compute_membrane_kernel(df_cell, membrane_cutoff=1, use_bins=True):
     return kernel
 
 
+def _allocate_gene_batch(args):
+    """
+    Helper function for parallel gene allocation (must be top-level for multiprocessing).
+
+    Args:
+        args: Tuple of (genes, counts, probs, bin_coords_x, bin_coords_y, seed)
+
+    Returns:
+        Tuple of (bin_x_vals, bin_y_vals, gene_vals, count_vals)
+    """
+    genes, counts, probs, bin_coords_x, bin_coords_y, seed = args
+
+    # Set random seed for reproducibility
+    np.random.seed(seed)
+
+    bin_x_list = []
+    bin_y_list = []
+    gene_list = []
+    count_list = []
+
+    for gene_name, gene_count in zip(genes, counts):
+        if gene_count == 0:
+            continue
+
+        # Multinomial sampling
+        allocated_counts = np.random.multinomial(int(gene_count), probs)
+
+        # Only keep bins that received at least 1 count
+        nonzero_bins = allocated_counts > 0
+        if not np.any(nonzero_bins):
+            continue
+
+        # Extract coordinates and counts
+        bin_x_list.append(bin_coords_x[nonzero_bins])
+        bin_y_list.append(bin_coords_y[nonzero_bins])
+        gene_list.append(np.full(nonzero_bins.sum(), gene_name))
+        count_list.append(allocated_counts[nonzero_bins])
+
+    if len(bin_x_list) == 0:
+        return None
+
+    return (
+        np.concatenate(bin_x_list),
+        np.concatenate(bin_y_list),
+        np.concatenate(gene_list),
+        np.concatenate(count_list)
+    )
+
+
 def assign_sc_to_cells(df_pixels, adata_sc):
     """
     Assign single-cell profiles to segmented cells based on cell type matching.
@@ -505,6 +555,8 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
         DataFrame with columns: bin_x, bin_y, gene, count
     """
     logger.info("Distributing genes to 2μm bins using PER-CELL splicing model...")
+    logger.info("  DISCRETE INTEGER ALLOCATION: Using multinomial sampling to preserve integer counts")
+    logger.info("  This ensures raw count format matching real Visium HD data")
 
     # Get list of genes in sc data
     sc_genes = np.array(adata_sc.var_names.tolist())
@@ -601,7 +653,7 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
     bin_x_indices = np.empty(estimated_entries, dtype=np.int32)
     bin_y_indices = np.empty(estimated_entries, dtype=np.int32)
     gene_indices = np.empty(estimated_entries, dtype=np.int32)
-    counts = np.empty(estimated_entries, dtype=np.float32)
+    counts = np.empty(estimated_entries, dtype=np.int32)  # Changed to int32 for discrete counts
 
     current_idx = 0  # Track current position in arrays
 
@@ -689,23 +741,52 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
                 bin_coords_x = (coords[:, 0] * microns_per_pixel / 2.0).astype(int)
                 bin_coords_y = (coords[:, 1] * microns_per_pixel / 2.0).astype(int)
 
-            # VECTORIZED: Compute gene-bin count matrix
-            gene_counts_matrix = compartment_counts[:, np.newaxis] * probs[np.newaxis, :]
-            nonzero_rows, nonzero_cols = np.where(gene_counts_matrix > 0)
+            # DISCRETE INTEGER ALLOCATION: Distribute counts as integers, not fractions
+            # OPTIMIZED: Use simple loop (multiprocessing overhead too high for per-cell processing)
+            # This preserves the spatial distribution while ensuring integer counts (like real data)
 
-            if len(nonzero_rows) == 0:
+            # Filter out zero-count genes first
+            nonzero_gene_mask = compartment_counts > 0
+            if not np.any(nonzero_gene_mask):
                 continue
 
-            # OPTIMIZED VECTORIZED DICTIONARY AGGREGATION
-            # Extract all bin coordinates, genes, and counts at once (vectorized!)
-            bin_x_vals = bin_coords_x[nonzero_cols]
-            bin_y_vals = bin_coords_y[nonzero_cols]
-            gene_vals = compartment_genes[nonzero_rows]
-            count_vals = gene_counts_matrix[nonzero_rows, nonzero_cols]
+            genes_to_process = compartment_genes[nonzero_gene_mask]
+            counts_to_process = compartment_counts[nonzero_gene_mask]
 
-            # FULLY VECTORIZED: Store bin_x and bin_y separately (no 1D conversion!)
-            # This avoids issues with cropped data where bins don't start at 0
-            gene_idx_vals = gene_idx_array[gene_mask][nonzero_mask][nonzero_rows]
+            # Pre-allocate lists for results
+            bin_x_vals_list = []
+            bin_y_vals_list = []
+            gene_vals_list = []
+            count_vals_list = []
+
+            # Simple loop (fastest for this use case - multiprocessing overhead is too high)
+            for gene_name, gene_count in zip(genes_to_process, counts_to_process):
+                # Multinomial sampling: allocate gene_count molecules to bins according to probs
+                # This ensures: (1) all counts are integers, (2) total count preserved, (3) distribution respected
+                allocated_counts = np.random.multinomial(int(gene_count), probs)
+
+                # Only keep bins that received at least 1 count
+                nonzero_bins = allocated_counts > 0
+                if not np.any(nonzero_bins):
+                    continue
+
+                # Extract coordinates and counts for bins that got molecules
+                bin_x_vals_list.append(bin_coords_x[nonzero_bins])
+                bin_y_vals_list.append(bin_coords_y[nonzero_bins])
+                gene_vals_list.append(np.full(nonzero_bins.sum(), gene_name))
+                count_vals_list.append(allocated_counts[nonzero_bins])
+
+            if len(bin_x_vals_list) == 0:
+                continue
+
+            # Concatenate all gene results
+            bin_x_vals = np.concatenate(bin_x_vals_list)
+            bin_y_vals = np.concatenate(bin_y_vals_list)
+            gene_vals = np.concatenate(gene_vals_list)
+            count_vals = np.concatenate(count_vals_list)
+
+            # Convert gene names to indices for sparse matrix
+            gene_idx_vals = np.array([gene_to_idx[g] for g in gene_vals], dtype=np.int32)
 
             # Write directly to pre-allocated numpy arrays (no reallocation!)
             n_entries = len(bin_x_vals)
@@ -717,12 +798,12 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
                 bin_x_indices = np.concatenate([bin_x_indices, np.empty(expansion_size, dtype=np.int32)])
                 bin_y_indices = np.concatenate([bin_y_indices, np.empty(expansion_size, dtype=np.int32)])
                 gene_indices = np.concatenate([gene_indices, np.empty(expansion_size, dtype=np.int32)])
-                counts = np.concatenate([counts, np.empty(expansion_size, dtype=np.float32)])
+                counts = np.concatenate([counts, np.empty(expansion_size, dtype=np.int32)])
 
             bin_x_indices[current_idx:current_idx+n_entries] = bin_x_vals.astype(np.int32)
             bin_y_indices[current_idx:current_idx+n_entries] = bin_y_vals.astype(np.int32)
             gene_indices[current_idx:current_idx+n_entries] = gene_idx_vals
-            counts[current_idx:current_idx+n_entries] = count_vals.astype(np.float32)
+            counts[current_idx:current_idx+n_entries] = count_vals.astype(np.int32)
             current_idx += n_entries
 
             # Track coordinate bounds
@@ -788,7 +869,7 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
     sparse_matrix = coo_matrix(
         (counts_arr, (bin_1d_indices, gene_indices_arr)),
         shape=(n_bins_x * n_bins_y, n_genes),
-        dtype=np.float32
+        dtype=np.int32  # Changed to int32 for discrete integer counts
     )
 
     # Free intermediate arrays
