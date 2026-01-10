@@ -335,7 +335,7 @@ def main():
     adata_sc = copy.deepcopy(so.final_nuclei)
 
     # Filter cells
-    sc.pp.filter_cells(adata_sc, min_counts=300)
+    sc.pp.filter_cells(adata_sc, min_counts=500)
     adata_raw = copy.deepcopy(adata_sc)
 
     # Initial single cell analysis

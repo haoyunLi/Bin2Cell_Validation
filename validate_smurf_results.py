@@ -1263,10 +1263,10 @@ def generate_validation_report(df_overlap, df_corr, df_gt, adata_sc_gt, adata_sm
     mean_recall = matched_cells['recall'].mean()
 
     # Format correlation stats (per-cell uses Spearman only)
-    mean_spearman = f"{df_corr['spearman_r'].mean():.3f}" if len(df_corr) > 0 else 'N/A'
+    mean_spearman = f"{df_corr['spearman_corr'].mean():.3f}" if len(df_corr) > 0 else 'N/A'
     mean_rmse = f"{df_corr['rmse'].mean():.3f}" if len(df_corr) > 0 else 'N/A'
-    high_corr = (df_corr['spearman_r'] > 0.5).sum() if len(df_corr) > 0 else 'N/A'
-    very_high_corr = (df_corr['spearman_r'] > 0.7).sum() if len(df_corr) > 0 else 'N/A'
+    high_corr = (df_corr['spearman_corr'] > 0.5).sum() if len(df_corr) > 0 else 'N/A'
+    very_high_corr = (df_corr['spearman_corr'] > 0.7).sum() if len(df_corr) > 0 else 'N/A'
 
     # Count total cells
     total_gt_cells = len(df_overlap)
