@@ -29,7 +29,7 @@ ORIGINAL_HD_DIR = 'Human_Colorectal/output/binned_outputs/square_002um'
 RANDOM_SEED = 42
 
 # Output paths
-OUTPUT_DIR = BASE_DIR / 'colorectal_pseudo_visium_hd_output_full'
+OUTPUT_DIR = BASE_DIR / 'colorectal_pseudo_visium_hd_output_full_0.25'
 
 # Parameters
 MICRONS_PER_PIXEL = 0.2737012522439323  # Image resolution

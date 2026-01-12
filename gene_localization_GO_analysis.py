@@ -11,6 +11,9 @@ Based on the paper's logic:
 6. Binomial split: V_ig ~ Binomial(N_ig, p_hat_ig) → nuclear counts
 7. Membrane genes: Use UniProt keywords on non-nuclear genes
 8. Cytosol: Everything else
+
+Note: Genes missing from the GTF are assigned p_g^0 = P_MIN so all genes
+participate in the nuclear split.
 """
 
 import os
@@ -27,7 +30,7 @@ from typing import Dict, Set
 # ============================================================================
 
 # Model parameters
-T_NUCLEAR_FRACTION = 0.15    # Target 15% unspliced transcripts globally
+T_NUCLEAR_FRACTION = 0.25    # Target 15% unspliced transcripts globally
 P_MIN = 0.02                 # Baseline probability for low-intron genes
 P_MAX = 0.4                  # Baseline probability for high-intron genes
 C_CAPTURE_EFFICIENCY = 1.0   # Global nuclear capture efficiency (0-1)
@@ -318,7 +321,7 @@ def classify_genes_aggregate(genes: list,
 
     This function does NOT classify genes at aggregate level.
     Instead, it computes:
-    - p0: Baseline probabilities for each gene (from GTF intron/exon ratios)
+    - p0: Baseline probabilities for each gene (genes missing from GTF use P_MIN)
     - global_alpha: Global scaling factor to achieve target nuclear fraction
     - membrane_genes_all: Set of membrane genes from UniProt
 
@@ -349,6 +352,13 @@ def classify_genes_aggregate(genes: list,
     # Step 2: Compute baseline probabilities p_g^0
     p0 = compute_baseline_probabilities(gene_structures)
 
+    # Ensure ALL genes participate in the nuclear split (missing GTF -> P_MIN)
+    missing_genes = genes_set - set(p0.keys())
+    if missing_genes:
+        for gene in missing_genes:
+            p0[gene] = P_MIN
+        print(f"  Added default p0 for {len(missing_genes)} genes missing from GTF (p0={P_MIN})")
+
     # Step 3: Compute global scaling factor α
     print(f"\nComputing global scaling factor α (target: {T_NUCLEAR_FRACTION*100}% of reads nuclear)...")
 
@@ -378,6 +388,8 @@ def classify_genes_aggregate(genes: list,
     print("Parameters computed for per-cell assignment:")
     print("="*70)
     print(f"  Genes with baseline prob (p0):  {len(p0):6d}")
+    if missing_genes:
+        print(f"  Genes missing from GTF:         {len(missing_genes):6d} (p0={P_MIN})")
     print(f"  UniProt membrane genes:         {len(membrane_genes):6d}")
     print(f"  Global alpha (α):               {global_alpha:.6f}")
     print("="*70)

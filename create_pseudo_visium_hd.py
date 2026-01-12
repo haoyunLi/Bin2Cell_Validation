@@ -571,7 +571,8 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
         assign_nuclear_genes_per_cell,
         SIGMA_CELL_FACTOR,
         C_CAPTURE_EFFICIENCY,
-        CLIP_EPS
+        CLIP_EPS,
+        P_MIN
     )
 
     # Extract p0 and global_alpha
@@ -580,7 +581,7 @@ def distribute_genes_to_bins(df_pixels, adata_sc, cell_to_sc_mapping,
 
     # OPTIMIZATION: Pre-compute p0 array aligned with sc_genes (10x faster than dict lookups!)
     logger.info(f"  Pre-computing p0 array for {len(sc_genes)} genes...")
-    p0_array = np.array([p0.get(g, 0.0) for g in sc_genes])
+    p0_array = np.array([p0.get(g, P_MIN) for g in sc_genes])
     logger.info(f"    p0 array: {(p0_array > 0).sum()} genes with non-zero baseline probability")
 
     # Pre-compute membrane gene mask (for fast vectorized operations)
