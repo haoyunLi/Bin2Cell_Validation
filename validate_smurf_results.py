@@ -1040,16 +1040,19 @@ def calculate_genewise_correlation_by_celltype(df_corr, df_gt, adata_sc_gt, adat
         logger.warning("  No cells with valid cell types found, skipping gene-wise correlation")
         return pd.DataFrame()
 
-    # Normalize ground truth data to match SMURF preprocessing
-    logger.info("  Normalizing ground truth data for gene-wise correlation...")
-    logger.info("    Applying: log1p(CPM normalization) to match SMURF preprocessing")
+    # Normalize both datasets for gene-wise correlation
+    logger.info("  Normalizing ground truth and SMURF data for gene-wise correlation...")
+    logger.info("    Applying: log1p(CPM normalization) to both GT and SMURF")
     adata_sc_gt_norm = adata_sc_gt.copy()
     sc.pp.normalize_total(adata_sc_gt_norm, target_sum=1e6)
     sc.pp.log1p(adata_sc_gt_norm)
-    logger.info("    Ground truth data normalized")
+    adata_smurf_norm = adata_smurf.copy()
+    sc.pp.normalize_total(adata_smurf_norm, target_sum=1e6)
+    sc.pp.log1p(adata_smurf_norm)
+    logger.info("    GT and SMURF data normalized")
 
     # Get common genes
-    common_genes = list(set(adata_sc_gt_norm.var_names) & set(adata_smurf.var_names))
+    common_genes = list(set(adata_sc_gt_norm.var_names) & set(adata_smurf_norm.var_names))
     logger.info(f"  Analyzing {len(common_genes)} common genes")
 
     results = []
@@ -1084,7 +1087,7 @@ def calculate_genewise_correlation_by_celltype(df_corr, df_gt, adata_sc_gt, adat
         # Extract expression matrices for all cells in this cell type (genes x cells)
         # Ensure same gene order - using NORMALIZED ground truth data
         gt_expr_matrix = adata_sc_gt_norm[gt_barcodes_valid, common_genes].X.toarray().T  # genes x cells
-        smurf_expr_matrix = adata_smurf[smurf_keys_valid, common_genes].X.toarray().T  # genes x cells
+        smurf_expr_matrix = adata_smurf_norm[smurf_keys_valid, common_genes].X.toarray().T  # genes x cells
 
         logger.info(f"    Expression matrices: {gt_expr_matrix.shape[0]} genes x {gt_expr_matrix.shape[1]} cells")
 
