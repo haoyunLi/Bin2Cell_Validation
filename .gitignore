@@ -44,6 +44,31 @@ bin2cell_validation_colorectal_output/
 colorectal_smurf_result_new/
 smurf_colorectal_validation_output/
 colorectal_pseudo_visium_hd_output_full_0.25/
+Tprolif_results_CD6/
+Tprolif_results/
+smurf_colorectal_validation_output_0.25/
+Plasma_results/
+Mono_Macro_results_HAVCR2/
+Mono_Macro_results/
+Malignant_results/
+LR_SC/
+Fibroblasts_results/
+Epithelial_results/
+DC_results/
+colorectal_validation_results_0.25/
+colorectal_smurf_result_0.25/
+CD8T_results/
+CD4Tconv_results/
+bin2cell_validation_colorectal_output_0.25/
+B_results_TNFRSF13C/
+B_results/
+bin2cell_results_colorectal_0.25/
+kidney_validation_results_0.25/
+kidney_pseudo_visium_hd_output_full_0.25/
+kidney_smurf_result_0.25/
+bin2cell_validation_kidney_output_0.25/
+bin2cell_results_kidney_0.25/
+
 
 # Large data files
 *.png
@@ -58,6 +83,7 @@ colorectal_pseudo_visium_hd_output_full_0.25/
 *.gz
 *.gtf
 *.txt
+*.R
 
 # Results and outputs
 *.html
